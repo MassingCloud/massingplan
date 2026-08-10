@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — massingplan{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+
+{% if has_logic is defined and not has_logic %}
+<div class="alert alert-error">
+  <strong>This file arrived with no relationships.</strong>
+  A network with no logic has no critical path: every activity reports zero
+  float and reads as critical. The dates below are durations laid end to end,
+  not a schedule. Export from Primavera as <code>.xer</code> (not PMXML) to
+  bring the logic across.
+</div>
+{% endif %}
+
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Start</span>
+    <span class="tile-value">{{ schedule.project_start }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Finish</span>
+    <span class="tile-value">{{ schedule.project_finish }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Working days</span>
+    <span class="tile-value">{{ schedule.duration_working_days }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Activities</span>
+    <span class="tile-value">{{ schedule.activity_count }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Critical</span>
+    <span class="tile-value">{{ schedule.critical_count }}</span>
+  </div>
+  {% if health %}
+  <div class="tile tile-grade grade-{{ health.grade }}">
+    <span class="tile-label">DCMA</span>
+    <span class="tile-value">{{ health.grade }}</span>
+    <span class="tile-sub">{{ health.score }}% of {{ health.assessed }} runnable</span>
+  </div>
+  {% endif %}
+</section>
+
+{% if health %}
+<section>
+  <h2>Schedule quality</h2>
+  <p class="note">
+    {{ health.assessed }} checks ran, {{ health.skipped }} were skipped for want
+    of data, {{ health.failed }} failed. Skipped checks are excluded from the
+    score — a schedule is not an A because four of the checks could not run.
+    {% if not health.optimisable %}
+    <strong>Not safe to optimise:</strong> the logic, float or critical-path
+    length index failed, and every optimisation decision reads from those.
+    {% endif %}
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>#</th><th>Check</th><th>Status</th><th>Value</th><th>Threshold</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      {% for check in health.checks %}
+      <tr class="status-{{ check.status }}">
+        <td>{{ check.number }}</td>
+        <td>{{ check.name }}</td>
+        <td><span class="pill pill-{{ check.status }}">{{ check.status }}</span></td>
+        <td>{{ check.value if check.value is not none else "—" }}</td>
+        <td class="muted">{{ check.threshold }}</td>
+        <td>
+          {{ check.detail }}
+          {% if check.offenders %}
+          <details>
+            <summary>{{ check.offender_count }} offender{{ "" if check.offender_count == 1 else "s" }}</summary>
+            <p class="offenders">{{ check.offenders | join(", ") }}{% if check.offender_count > check.offenders | length %}, and {{ check.offender_count - (check.offenders | length) }} more{% endif %}</p>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section>
+  <h2>Schedule</h2>
+  <div id="gantt"
+       class="gantt-host"
+       data-activities="{{ schedule.activities | tojson | forceescape }}"
+       data-start="{{ schedule.project_start }}"
+       data-finish="{{ schedule.project_finish }}"></div>
+  <noscript>
+    <p class="note">The bar chart needs JavaScript. The table below is the same data.</p>
+  </noscript>
+</section>
+
+<section>
+  <h2>Activities</h2>
+  <table class="activities">
+    <thead>
+      <tr>
+        <th>Activity</th><th>Start</th><th>Finish</th>
+        <th class="num">Dur</th><th class="num">Total float</th><th class="num">Free float</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in schedule.activities %}
+      <tr class="{{ 'is-critical' if row.is_critical else '' }}">
+        <td>
+          {# The planner's own code where the source carried one; the internal
+             id is correct and unrecognisable. #}
+          <strong>{{ row.code | default(row.activity_id, true) }}</strong>
+          {% if row.name %}<span class="muted">{{ row.name }}</span>{% endif %}
+          {% if row.is_longest_path %}<span class="tag">driving</span>{% endif %}
+          {% if not row.constraint_satisfied %}<span class="tag tag-warn">constraint missed</span>{% endif %}
+        </td>
+        <td>{{ row.start }}</td>
+        <td>{{ row.finish }}</td>
+        <td class="num">{{ row.duration_days }}</td>
+        {# `None` is not zero: a completed activity has no float, and printing 0
+           would put finished work on the critical path. #}
+        <td class="num">{{ row.total_float_days if row.total_float_days is not none else "—" }}</td>
+        <td class="num">{{ row.free_float_days if row.free_float_days is not none else "—" }}</td>
+        <td class="muted">{{ row.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if issues %}
+<section>
+  <h2>Import issues <span class="muted">({{ issues | length }})</span></h2>
+  <p class="note">
+    Everything the reader had to coerce, default or drop. A silent default
+    produces a plausible schedule that is wrong, with nothing to look at.
+  </p>
+  <table class="checks">
+    <thead><tr><th>Severity</th><th>Code</th><th>What</th><th>Action taken</th></tr></thead>
+    <tbody>
+      {% for issue in issues %}
+      <tr><td><span class="pill pill-{{ issue.severity }}">{{ issue.severity }}</span></td>
+          <td><code>{{ issue.code }}</code></td>
+          <td>{{ issue.message }}</td>
+          <td class="muted">{{ issue.action }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/gantt.js') }}" defer></script>
+{% endblock %}

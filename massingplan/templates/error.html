@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Problem — massingplan{% endblock %}
+{% block content %}
+<h1>{{ error.message if error else "No such page" }}</h1>
+{% if error and error.detail %}
+<div class="alert alert-error">
+  {% if error.detail is string %}
+    <p>{{ error.detail }}</p>
+  {% else %}
+    <ul class="plain">
+      {% for item in error.detail %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+</div>
+{% endif %}
+<p><a href="{{ url_for('main.index') }}">Back to the start</a></p>
+{% endblock %}

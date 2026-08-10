@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Import a schedule — massingplan{% endblock %}
+{% block content %}
+<h1>Import a schedule</h1>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<p class="lede">
+  A Primavera <code>.xer</code> or a Microsoft Project <code>.xml</code> (MSPDI)
+  export. Nothing is stored — the file is read, scheduled and rendered in the
+  response.
+</p>
+
+<form method="post" enctype="multipart/form-data" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="file">Schedule file</label>
+  <input type="file" id="file" name="file" accept=".xer,.xml,text/xml,text/plain" required>
+  <button type="submit">Read it</button>
+</form>
+
+<h2>What comes across</h2>
+<ul class="plain">
+  <li><strong>Relationships</strong>, with their type and lag — the
+    <code>TASKPRED</code> table. An import that omits it produces a network with
+    no critical path, where every activity reads as critical with zero float.</li>
+  <li><strong>Calendars</strong>, including exceptions. An unparsed Christmas
+    shutdown moves every downstream date two weeks early.</li>
+  <li><strong>Constraints, actual dates and remaining duration</strong>, so a
+    progressed schedule reschedules from its data date.</li>
+  <li><strong>Costs from <code>TASKRSRC</code> and notes from
+    <code>TASKMEMO</code></strong> — neither lives on <code>TASK</code>, and
+    reading them from there yields zero.</li>
+</ul>
+
+<h2>What does not</h2>
+<p class="note">
+  Binary <code>.mpp</code> is a proprietary, undocumented format. Export as XML
+  from Microsoft Project instead; it round-trips losslessly. Primavera PMXML is
+  read, but by a path that does not carry relationships — export
+  <code>.xer</code> for a full import.
+</p>
+{% endblock %}

@@ -1,0 +1,121 @@
+"""The JSON API. A thin translation over `massingplan.api`.
+
+Every view is: read the request, call one `api` function, return its dict. No
+domain logic here -- that is what makes the same surface mountable under FastAPI
+in massing without a rewrite.
+
+The namespace, the bearer-token header and the error envelope match
+massing.cloud's convention (SPEC.md 3.2), so a client can speak to either
+product without a second error table.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from flask import Blueprint, jsonify, request
+
+from ..api import errors, schedules
+
+bp = Blueprint("schedule_api", __name__)
+
+
+def _payload() -> dict[str, Any]:
+    """The JSON body, or a 400 that says what was wrong with it.
+
+    A required JSON content type is also half the CSRF defence for this
+    blueprint (see `app.py`): a cross-origin form post cannot set it.
+    """
+    if not request.is_json:
+        raise errors.ApiError(
+            "this endpoint takes application/json",
+            detail=f"got Content-Type: {request.content_type or 'none'}",
+        )
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise errors.ApiError("the request body must be a JSON object")
+    return body
+
+
+@bp.post("/schedule")
+def schedule() -> Any:
+    """Compute a schedule from a network."""
+    return jsonify(schedules.schedule_from_payload(_payload()))
+
+
+@bp.post("/analyse")
+def analyse() -> Any:
+    """Compute a schedule and score it against the DCMA 14 points."""
+    return jsonify(schedules.analyse(_payload()))
+
+
+@bp.post("/risk")
+def risk() -> Any:
+    """Monte Carlo the network. Seeded, so the same plan gives the same answer."""
+    return jsonify(schedules.simulate_risk(_payload()))
+
+
+@bp.post("/level")
+def level() -> Any:
+    """Resource-level the network. Advisory by default -- core never writes."""
+    return jsonify(schedules.level_resources(_payload()))
+
+
+@bp.post("/compare")
+def compare() -> Any:
+    """Diff two schedules and attribute the finish move."""
+    return jsonify(schedules.compare_baselines(_payload()))
+
+
+@bp.post("/import")
+def import_schedule() -> Any:
+    """Read an uploaded Primavera XER or MS Project MSPDI file."""
+    upload = request.files.get("file")
+    if upload is None:
+        raise errors.ApiError(
+            "no file uploaded", detail="post multipart/form-data with a `file` field"
+        )
+    raw = upload.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # P6 exports are frequently Windows-1252. Replacing undecodable bytes
+        # loses an accent; refusing loses the whole schedule.
+        text = raw.decode("cp1252", errors="replace")
+    return jsonify(schedules.import_file(text, filename=upload.filename or ""))
+
+
+@bp.get("/capabilities")
+def capabilities() -> Any:
+    """What this build can do, in the caller's terms.
+
+    Named rather than discovered by trial: a client that has to POST a `.mpp` to
+    find out it is unsupported has learned it the expensive way.
+    """
+    from ..core.mspdi import mpp_unavailable_reason
+
+    return jsonify(
+        {
+            "formats": {
+                "read": ["xer", "mspdi"],
+                "write": ["xer", "mspdi"],
+                "unsupported": {"mpp": mpp_unavailable_reason()},
+            },
+            "relationship_types": ["FS", "SS", "FF", "SF"],
+            "constraint_types": [
+                c.value
+                for c in __import__(
+                    "massingplan.core.constraints", fromlist=["ConstraintType"]
+                ).ConstraintType
+            ],
+            "features": [
+                "multi_calendar_cpm",
+                "data_date_and_progressed_logic",
+                "retained_logic_and_progress_override",
+                "dcma_14_point",
+                "monte_carlo_risk",
+                "resource_levelling",
+                "baseline_comparison_with_delay_attribution",
+            ],
+        }
+    )

@@ -1,0 +1,251 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "massingplan"
+version = "0.1.0"
+description = "Standalone construction scheduling engine: multi-calendar CPM, DCMA schedule quality, Primavera XER and MS Project interchange, resource levelling and delay attribution."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "MassingCloud" }]
+keywords = [
+    "construction",
+    "scheduling",
+    "cpm",
+    "critical path",
+    "primavera",
+    "p6",
+    "xer",
+    "dcma",
+    "last planner",
+    "line of balance",
+    "flask",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Flask",
+    "Intended Audience :: Other Audience",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+# The standalone app. `massingplan.core` deliberately needs NONE of this -- it is
+# pure stdlib so it can be vendored into another product's source tree and
+# imported there with no packaging change at all (SPEC.md 12).
+#
+# Exactly what is imported, and nothing else. The persistence stack
+# (SQLAlchemy, Alembic, Flask-Login, argon2) is not here because nothing imports
+# it yet -- declaring it now would make `pip install` pull a dozen packages the
+# app never touches, and would hide the fact that the app is currently
+# stateless. It returns with the models phase, as a dependency and as a fact.
+dependencies = [
+    "Flask>=3.0,<4.0",
+    "Flask-WTF>=1.2,<2.0",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+server = ["gunicorn>=21.2"]
+# Optional adapters (SPEC.md 3.2). The core must import and test without these.
+oidc = ["Authlib>=1.3,<2.0", "requests>=2.31"]
+s3 = ["boto3>=1.34"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "ruff>=0.6",
+    "mypy>=1.9",
+    "import-linter>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/MassingCloud/massingplan"
+Repository = "https://github.com/MassingCloud/massingplan"
+Issues = "https://github.com/MassingCloud/massingplan/issues"
+
+[project.scripts]
+massingplan = "massingplan.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["massingplan*"]
+
+[tool.setuptools.package-data]
+massingplan = ["py.typed", "templates/**/*", "static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "kernel: the timeaxis adjoint invariant sweep (own CI job, 100% branch coverage)",
+    "adapter: tests that exercise an optional adapter (SPEC.md 3.2)",
+]
+
+[tool.coverage.run]
+source = ["massingplan"]
+omit = ["*/migrations/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["migrations", ".venv", "frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF", "BLE", "S"]
+ignore = [
+    "B008",   # Flask/WTForms idiomatically call in argument defaults
+    "RUF012", # SQLAlchemy declarative attrs are not ClassVar
+    # `class X(str, Enum)` rather than `StrEnum`. `core` is vendored into other
+    # source trees, and StrEnum needs 3.11 -- keeping the older form means the
+    # engine drops into a 3.9 or 3.10 consumer unchanged. Every call site uses
+    # `.value` explicitly, so the `str()` difference between the two never bites.
+    "UP042",
+    # `datetime.UTC` is the 3.11 alias for the same object. Same reason.
+    "UP017",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert (that is the point) and use obviously-fake credentials. S603/S607
+# cover the determinism probe, which re-runs the suite in a subprocess under a
+# different PYTHONHASHSEED -- `sys.executable` is not a partial path in any
+# meaningful sense.
+"tests/**" = ["S101", "S105", "S106", "S311", "S603", "S607", "E501"]
+# The vendoring script shells out to `git rev-parse` to read the pin. There is
+# no untrusted input on that path and no shell involved.
+"scripts/vendor_to_massing.py" = ["S603", "S607"]
+# The XER and MSPDI readers parse a vendor's format, whose field names are the
+# vendor's (`clndr_data`, `day_hr_cnt`). Renaming them to satisfy N806 would make
+# the code unmatchable against Oracle's own documentation, which is the only
+# specification these formats have.
+"massingplan/core/xer.py" = ["N806"]
+"massingplan/core/mspdi.py" = ["N806"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+strict_equality = true
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["flask_wtf.*"]
+ignore_missing_imports = true
+
+# The optional adapter *implementations* ship in a later phase. Their bases and
+# local defaults exist now; the remote ones are lazily imported behind an
+# ImportError handler on purpose (SPEC.md 3.2), so their absence is the design
+# rather than a missing file.
+[[tool.mypy.overrides]]
+module = [
+    "massingplan.services.entitlement.massing_cloud",
+    "massingplan.services.identity.oidc",
+    "massingplan.services.storage.s3",
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+# ---------------------------------------------------------------------------
+# Decoupling contracts (SPEC.md 3, 13).
+#
+# Two separate promises, both turned from a code-review opinion into a build
+# failure:
+#
+#   1. `core` is pure. It may not import the web app, the ORM, or any optional
+#      adapter -- because it gets copied verbatim into another product's source
+#      tree, where none of those exist. This contract is the reason the vendoring
+#      works, and it is the one most likely to be broken by a well-meant
+#      "just import the model here" edit.
+#   2. `api` is framework-agnostic. Flask lives in `blueprints`; massing mounts
+#      the same functions under FastAPI. An `api` module that imports `flask`
+#      silently makes the second consumer impossible.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "massingplan"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core is pure stdlib -- nothing above it, no adapters, no ORM, no web"
+type = "forbidden"
+source_modules = ["massingplan.core"]
+forbidden_modules = [
+    "massingplan.api",
+    "massingplan.services",
+    "massingplan.blueprints",
+    "massingplan.config",
+    "massingplan.extensions",
+    "flask",
+    "sqlalchemy",
+    "pydantic",
+]
+
+[[tool.importlinter.contracts]]
+name = "api is framework-agnostic"
+type = "forbidden"
+source_modules = ["massingplan.api"]
+forbidden_modules = [
+    "massingplan.blueprints",
+    "flask",
+    "flask_login",
+    "flask_wtf",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core never imports optional adapters"
+type = "forbidden"
+source_modules = [
+    "massingplan.blueprints",
+    "massingplan.api",
+    "massingplan.security",
+    "massingplan.config",
+    "massingplan.app",
+]
+forbidden_modules = [
+    "massingplan.services.entitlement.massing_cloud",
+    "massingplan.services.identity.oidc",
+    "massingplan.services.storage.s3",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapter bases never import their implementations"
+type = "forbidden"
+source_modules = [
+    "massingplan.services.entitlement.base",
+    "massingplan.services.identity.base",
+    "massingplan.services.storage.base",
+]
+forbidden_modules = [
+    "massingplan.services.entitlement.standalone",
+    "massingplan.services.entitlement.massing_cloud",
+    "massingplan.services.identity.local",
+    "massingplan.services.identity.oidc",
+    "massingplan.services.storage.local",
+    "massingplan.services.storage.s3",
+]
+
+[[tool.importlinter.contracts]]
+name = "The layers run one way"
+type = "layers"
+layers = [
+    "massingplan.blueprints",
+    "massingplan.api",
+    "massingplan.services",
+    "massingplan.core",
+]
+# No `models` layer: nothing persists yet, and an empty package listed here to
+# make the contract look complete is the opposite of what these contracts are
+# for. It goes back between `services` and `core` when the ORM lands.

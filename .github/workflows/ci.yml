@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    # Blocking, not advisory. A type check nobody has to fix is one nobody reads.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check --output-format=github .
+      - run: ruff format --check .
+      - run: mypy massingplan
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q --cov=massingplan --cov-report=term-missing
+
+  timeaxis-kernel:
+    # The one invariant every other module assumes without checking. A lattice
+    # optimisation that shaves a branch cannot land without someone proving the
+    # branch was unreachable. See SPEC.md 8.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: |
+          pytest tests/test_timeaxis_kernel.py -q \
+            --cov=massingplan.core.timeaxis --cov-branch \
+            --cov-report=term-missing --cov-fail-under=100
+
+  determinism:
+    # Same input, same answer -- across runs and across hash seeds. Without a
+    # total-order tiebreak on every sort, set iteration order leaks into
+    # levelling and the same file produces different dates between runs. An
+    # optimiser whose answer changes cannot be reviewed, approved, or defended.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Run the engine suite under two different hash seeds
+        run: |
+          PYTHONHASHSEED=0 pytest tests -q -p no:randomly
+          PYTHONHASHSEED=524287 pytest tests -q -p no:randomly
+
+  purity:
+    # `core` is copied verbatim into another product's source tree, where none
+    # of this repo's dependencies are guaranteed to exist. This job proves it
+    # imports with nothing but the standard library installed -- the contract in
+    # pyproject.toml is checked statically, this checks it for real.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Import every core module with no dependencies installed
+        run: |
+          python - <<'PY'
+          import pathlib, importlib.util, sys
+          root = pathlib.Path("massingplan/core")
+          sys.path.insert(0, ".")
+          failures = []
+          for path in sorted(root.glob("*.py")):
+              name = f"massingplan.core.{path.stem}"
+              try:
+                  importlib.import_module(name)
+              except Exception as exc:
+                  failures.append(f"{name}: {exc}")
+          if failures:
+              raise SystemExit("core is not pure:\n  " + "\n  ".join(failures))
+          print("core imports clean on a bare interpreter")
+          PY
+
+  offline:
+    # Imports and serves with the network dropped. A standalone product that
+    # cannot boot without reaching a host is not standalone.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python scripts/check_offline.py
+
+  no-adapters:
+    # Delete every optional adapter and re-run the suite. The decoupling is a
+    # build failure, not a code-review opinion.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: |
+          rm -f massingplan/services/entitlement/massing_cloud.py
+          rm -f massingplan/services/identity/oidc.py
+          rm -f massingplan/services/storage/s3.py
+          pytest -q
+
+  imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: lint-imports

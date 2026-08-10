@@ -1,0 +1,7 @@
+# LF in the repository, whatever the checkout does locally. Without this the
+# XER fixtures -- a tab-delimited format where a stray CR changes a field --
+# round-trip differently on Windows and Linux, and the round-trip tests pass on
+# one and fail on the other.
+* text=auto eol=lf
+*.png binary
+*.xer text eol=lf

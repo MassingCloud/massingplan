@@ -1,0 +1,135 @@
+/* Self-hosted only -- no external font, no CDN. The strict `default-src 'self'`
+   CSP in app.py depends on that staying true. System font stack, one file. */
+
+:root {
+  --ink: #14181d;
+  --muted: #5d6875;
+  --paper: #ffffff;
+  --surface: #f6f7f9;
+  --line: #dfe3e8;
+  --accent: #1c5d99;
+  --critical: #b3341f;
+  --driving: #8a2213;
+  --warn: #9a6510;
+  --ok: #1f6f43;
+  --skip: #6b7280;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e7eaee;
+    --muted: #9aa5b1;
+    --paper: #14181d;
+    --surface: #1b2027;
+    --line: #2c333c;
+    --accent: #6fb3e8;
+    --critical: #ef8b76;
+    --driving: #f2a48f;
+    --warn: #e0b364;
+    --ok: #6dc191;
+    --skip: #96a0ac;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.wordmark { font-size: 1.05rem; text-decoration: none; color: var(--ink); letter-spacing: -0.01em; }
+.wordmark strong { color: var(--accent); }
+.masthead nav { display: flex; gap: 1.1rem; font-size: 0.9rem; }
+.masthead nav a { color: var(--muted); text-decoration: none; }
+.masthead nav a:hover { color: var(--accent); }
+
+.shell { max-width: 68rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+h1 { font-size: 1.7rem; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 0.75rem; }
+h2 { font-size: 1.15rem; margin: 2.2rem 0 0.6rem; letter-spacing: -0.01em; }
+.lede { font-size: 1.05rem; color: var(--muted); max-width: 46rem; }
+.note { color: var(--muted); font-size: 0.9rem; max-width: 52rem; }
+.muted { color: var(--muted); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; }
+
+.cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin: 1.5rem 0; }
+.card {
+  display: block; padding: 1.1rem; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); text-decoration: none; color: inherit;
+}
+.card:hover { border-color: var(--accent); }
+.card h2 { margin: 0 0 0.4rem; font-size: 1rem; }
+.card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+ul.plain { padding-left: 1.1rem; max-width: 52rem; }
+ul.plain li { margin: 0.35rem 0; }
+
+.alert { padding: 0.85rem 1rem; border-radius: 6px; border: 1px solid; margin: 1rem 0; }
+.alert-error { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 10%, transparent); }
+
+/* -- summary tiles -------------------------------------------------------- */
+.tiles { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); margin: 1.25rem 0; }
+.tile { padding: 0.7rem 0.85rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.tile-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.tile-value { display: block; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.tile-sub { display: block; font-size: 0.72rem; color: var(--muted); }
+.tile-grade .tile-value { font-size: 1.9rem; font-weight: 600; }
+.grade-A .tile-value { color: var(--ok); }
+.grade-B .tile-value { color: var(--ok); }
+.grade-C .tile-value { color: var(--warn); }
+.grade-D .tile-value, .grade-F .tile-value { color: var(--critical); }
+
+/* -- tables --------------------------------------------------------------- */
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.5rem; }
+th, td { text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.is-critical td:first-child { font-weight: 600; color: var(--critical); }
+
+.pill { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.pill-pass, .pill-info { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.pill-fail, .pill-error { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+/* Skipped is deliberately not styled as a pass. That distinction is the whole
+   point of the tri-state, and colouring it green would undo it in the UI. */
+.pill-skipped { background: color-mix(in srgb, var(--skip) 18%, transparent); color: var(--skip); }
+.pill-warning { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+
+.tag { display: inline-block; margin-left: 0.35rem; padding: 0 0.35rem; border-radius: 3px; font-size: 0.68rem; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.tag-warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.offenders { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; color: var(--muted); word-break: break-word; }
+
+/* -- gantt ---------------------------------------------------------------- */
+.gantt-host { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow-x: auto; padding: 0.25rem; }
+.gridline { stroke: var(--line); stroke-width: 1; }
+.rowline { stroke: var(--line); stroke-width: 0.5; opacity: 0.55; }
+.axis-label { fill: var(--muted); font-size: 10px; }
+.row-label { fill: var(--ink); font-size: 11px; }
+.bar { fill: var(--accent); }
+.bar-critical { fill: var(--critical); }
+.bar-driving { fill: var(--driving); }
+.bar-complete { fill: var(--muted); opacity: 0.55; }
+.bar-violation { stroke: var(--warn); stroke-width: 2; }
+.bar-milestone { fill: var(--ink); }
+.float-tail { fill: var(--muted); opacity: 0.35; }
+.link { fill: none; stroke: var(--muted); stroke-width: 1; opacity: 0.6; }
+.link-critical { stroke: var(--critical); opacity: 0.9; }
+.arrowhead { fill: var(--muted); }
+.arrowhead-critical { fill: var(--critical); }
+
+/* -- forms ---------------------------------------------------------------- */
+.uploader { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; max-width: 28rem; margin: 1.25rem 0; }
+.uploader label { font-size: 0.8rem; color: var(--muted); }
+button { font: inherit; padding: 0.45rem 1.1rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+button:hover { filter: brightness(1.08); }
+
+.footer { border-top: 1px solid var(--line); padding: 1.25rem 1.5rem; }
+.footer p { max-width: 68rem; margin: 0 auto; font-size: 0.78rem; color: var(--muted); }

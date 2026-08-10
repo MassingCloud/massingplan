@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}massingplan — construction scheduling{% endblock %}
+{% block content %}
+<h1>A construction schedule you can check by hand.</h1>
+
+<p class="lede">
+  Multi-calendar CPM with all four relationship types and all ten constraint
+  types. DCMA 14-point quality assessment where a check that could not run says
+  <em>skipped</em>, not <em>passed</em>. Primavera XER and MS Project
+  interchange that keeps the logic. Monte Carlo risk, resource levelling, and
+  delay attribution that sums.
+</p>
+
+<div class="cards">
+  <a class="card" href="{{ url_for('main.demo') }}">
+    <h2>See it work</h2>
+    <p>
+      An eight-storey mid-rise fragment on two calendars, with a lag, a
+      procurement constraint and a Christmas shutdown — scheduled and scored.
+    </p>
+  </a>
+  <a class="card" href="{{ url_for('main.upload') }}">
+    <h2>Import your own</h2>
+    <p>
+      A Primavera <code>.xer</code> or an MS Project <code>.xml</code>. The
+      import report tells you how much logic came across — because a network
+      with none reads as 100% critical and looks fine.
+    </p>
+  </a>
+</div>
+
+<h2>What it refuses to do</h2>
+<ul class="plain">
+  <li><strong>Clamp negative float.</strong> It is the output. It is the reason
+    the planner set the constraint.</li>
+  <li><strong>Default silently.</strong> Every coercion, drop and fallback emits
+    an issue with a stable code and the action taken.</li>
+  <li><strong>Score a schedule 14/14 for data it never had.</strong> Checks
+    needing a baseline, actuals or resources report as skipped and leave the
+    denominator.</li>
+  <li><strong>Return numbers computed over a broken network.</strong> Circular
+    logic names the loop and produces no dates.</li>
+  <li><strong>Move a contract date nobody approved.</strong> Levelling within
+    float reports what it could not resolve rather than extending the finish.</li>
+</ul>
+{% endblock %}

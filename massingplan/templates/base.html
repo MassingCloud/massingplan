@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}massingplan{% endblock %}</title>
+  {# Self-hosted only. No CDN, no external font, no third-party chart library --
+     the strict `default-src 'self'` CSP in app.py depends on that staying true,
+     and a test asserts no template carries an external script tag. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="{{ url_for('main.index') }}">massing<strong>plan</strong></a>
+    <nav>
+      <a href="{{ url_for('main.demo') }}">Demo</a>
+      <a href="{{ url_for('main.upload') }}">Import</a>
+      <a href="/api/massingplan/v1/capabilities">API</a>
+    </nav>
+  </header>
+  <main class="shell">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <p>
+      A construction scheduling engine you can check by hand. Not affiliated with
+      Oracle, Primavera, or Microsoft; XER and MSPDI are read and written as
+      documented interchange formats.
+    </p>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

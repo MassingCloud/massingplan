@@ -145,7 +145,7 @@ def _options(payload: Mapping[str, Any] | None) -> SchedulerOptions:
 
 def chart_rows(
     outcome: Any,
-    links: Sequence[Any] = (),
+    links: Sequence[Any],
     labels: Mapping[str, tuple[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """`to_rows()` plus the two things a chart needs and persistence does not.
@@ -157,17 +157,36 @@ def chart_rows(
     and drew nothing. No error, no blank space, just a chart quietly missing the
     feature its own docstring leads with. The `|| []` is what made it silent.
 
+    Each entry is `{"id", "type", "lag_days"}` -- **the same shape this module
+    accepts as input**. The first version emitted bare id strings, which cost
+    twice. The renderer could not tell a Start-Start tie from a Finish-Start
+    one, so it drew every arrow predecessor-finish to successor-start and every
+    SS and FF link pointed backwards in time. And `_tasks_and_links` reads a
+    bare string as Finish-Start with zero lag, so a client that fed a response
+    back in silently flattened every relationship type and every lag. Matching
+    the input shape fixes both, and makes the API round-trip exactly.
+
     **`code` and `name`.** Rows carry the internal id, which is what persistence
     needs and what nobody recognises. On a stored project that id is 32 hex
     characters, so every bar was labelled with a UUID.
 
-    Both are added here rather than inside `to_rows()`, whose key set is frozen
-    by test on purpose. Three call sites were each doing half of this
-    separately; now there is one.
+    All three are added here rather than inside `to_rows()`, whose key set is
+    frozen by test on purpose.
+
+    `links` is required, deliberately. It defaulted to `()` for one commit, and
+    a default that yields "no relationships" is the arrows bug waiting to be
+    reintroduced by a caller who simply forgets an argument. Forgetting it is
+    now a TypeError at the call site.
     """
-    incoming: dict[str, list[str]] = {}
+    incoming: dict[str, list[dict[str, Any]]] = {}
     for link in links:
-        incoming.setdefault(str(link.successor), []).append(str(link.predecessor))
+        incoming.setdefault(str(link.successor), []).append(
+            {
+                "id": str(link.predecessor),
+                "type": link.type.value,
+                "lag_days": link.lag_days,
+            }
+        )
 
     known = dict(labels or {})
     rows = []

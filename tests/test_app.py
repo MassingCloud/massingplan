@@ -242,6 +242,51 @@ def test_relationship_types_and_lags_survive_the_api(client) -> None:  # type: i
     assert rows["B"]["start"] == "2026-06-03"
 
 
+def test_a_response_can_be_fed_straight_back_in(client) -> None:  # type: ignore[no-untyped-def]
+    """The output's `predecessors` is the same shape as the input's.
+
+    It was a list of bare id strings for one commit, and `_tasks_and_links`
+    reads a bare string as Finish-Start with zero lag -- so resubmitting a
+    response silently flattened every SS, FF and SF tie and dropped every lag.
+    The schedule came back different with nothing reporting a problem, which is
+    the worst way for an API to be wrong.
+    """
+    body = {
+        "data_date": "2026-06-01",
+        "activities": [
+            {"id": "A", "duration_days": 10},
+            {
+                "id": "B",
+                "duration_days": 5,
+                "predecessors": [{"id": "A", "type": "SS", "lag_days": 2}],
+            },
+        ],
+    }
+    first = client.post("/api/massingplan/v1/schedule", json=body).get_json()
+
+    # Rename the row key to the input key and resubmit, changing nothing else.
+    replayed = {
+        "data_date": "2026-06-01",
+        "activities": [
+            {
+                "id": row["activity_id"],
+                "duration_days": row["duration_days"],
+                "predecessors": row["predecessors"],
+            }
+            for row in first["activities"]
+        ],
+    }
+    second = client.post("/api/massingplan/v1/schedule", json=replayed).get_json()
+
+    assert second["project_finish"] == first["project_finish"]
+    assert {r["activity_id"]: r["start"] for r in second["activities"]} == {
+        r["activity_id"]: r["start"] for r in first["activities"]
+    }
+    # And the tie really did survive as SS+2 rather than being read as FS.
+    replayed_b = next(r for r in second["activities"] if r["activity_id"] == "B")
+    assert replayed_b["start"] == "2026-06-03"
+
+
 def test_analyse_returns_a_grade_with_skipped_checks_excluded(client) -> None:  # type: ignore[no-untyped-def]
     body = {
         "data_date": "2026-06-01",

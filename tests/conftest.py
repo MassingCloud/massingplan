@@ -42,6 +42,29 @@ def block_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket.socket, "connect", _blocked)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def cheap_password_hashing() -> None:
+    """Turn argon2's cost down **for the suite only**.
+
+    Production uses the OWASP floor: 64MiB and three passes, ~50ms per hash,
+    slow on purpose. Several hundred registrations across the suite then
+    allocate tens of gigabytes in total, and on a machine under memory pressure
+    argon2 raises `HashingError: Memory allocation error` -- a failure that
+    looks like a defect in the code under test and is not one. It happened twice
+    while this suite was being run.
+
+    The shipped parameters are still asserted, by
+    `test_auth.py::test_the_shipped_hashing_cost_is_the_owasp_floor`, which
+    reads `SHIPPED_PARAMETERS` -- captured at import, before this runs. So the
+    suite is cheap and lowering the real cost still fails a test.
+    """
+    from massingplan.services import accounts
+
+    accounts.TIME_COST = 1
+    accounts.MEMORY_COST_KIB = 8
+    accounts.PARALLELISM = 1
+
+
 def test_the_network_guard_actually_blocks() -> None:
     """Guard the guard: if this stops raising, every other test's isolation is a lie."""
     with pytest.raises(RuntimeError, match="tried to reach"):

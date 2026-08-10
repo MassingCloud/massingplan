@@ -42,7 +42,18 @@
    * @property {boolean} is_longest_path
    * @property {boolean} constraint_satisfied
    * @property {string} status
-   * @property {string[]} predecessors  Activity ids. The arrows are drawn from this.
+   * @property {Predecessor[]} predecessors  The arrows are drawn from this.
+   */
+
+  /**
+   * One relationship, in the same shape `api.schedules` accepts as input --
+   * so a response can be fed straight back without flattening every tie to
+   * Finish-Start with zero lag.
+   *
+   * @typedef {object} Predecessor
+   * @property {string} id        Predecessor activity id.
+   * @property {"FS"|"SS"|"FF"|"SF"} type
+   * @property {number} lag_days  Negative is a lead.
    */
 
   /**
@@ -244,36 +255,84 @@
       shape.appendChild(el("title", {}, tip));
       bars.appendChild(shape);
 
-      geometry[row.activity_id] = { x: x, w: w, y: y, mid: y + BAR_H / 2, critical: row.is_longest_path };
+      // A milestone is a *point*, so its geometry has no width. Giving it the
+      // bar width `w` put the outgoing anchor a full day to the right of the
+      // diamond, and an arrow to a successor starting that same day then ran
+      // backwards -- 2px at this zoom, 40px zoomed in.
+      geometry[row.activity_id] = {
+        x: x, w: milestone ? 0 : w, y: y, mid: y + BAR_H / 2, critical: row.is_longest_path
+      };
     });
 
     // -- dependency arrows -------------------------------------------------
     // Routed as an elbow rather than a straight line: on a real schedule a
     // straight line crosses six unrelated bars and tells the reader nothing.
+    //
+    // **Each end is anchored by relationship type.** A Start-Start tie
+    // constrains the two *starts*, so an arrow drawn from the predecessor's
+    // finish is not a picture of that constraint -- and because an SS successor
+    // usually starts before its predecessor ends, such an arrow runs
+    // right-to-left and reads as though time flows backwards. Every arrow did
+    // that for as long as the payload carried bare ids and no type.
     var links = el("g", { class: "links" });
     rows.forEach(function (/** @type {Row} */ row) {
       // Not `row.predecessors || []`. That is what hid the missing contract:
       // an absent key became an empty list and the chart drew nothing, with no
       // error anywhere. If the server stops sending them, this throws.
-      row.predecessors.forEach(function (/** @type {string} */ predId) {
-        var from = geometry[predId];
+      row.predecessors.forEach(function (/** @type {Predecessor} */ pred) {
+        var from = geometry[pred.id];
         var to = geometry[row.activity_id];
         if (!from || !to) return;
-        var x1 = from.x + from.w;
+
+        // FS and FF leave the predecessor's finish; SS and SF leave its start.
+        var fromFinish = pred.type === "FS" || pred.type === "FF";
+        // FS and SS arrive at the successor's start; FF and SF at its finish.
+        var toStart = pred.type === "FS" || pred.type === "SS";
+
+        var x1 = fromFinish ? from.x + from.w : from.x;
         var y1 = from.mid;
-        var x2 = to.x;
+        var x2 = toStart ? to.x : to.x + to.w;
         var y2 = to.mid;
         var gap = Math.max(6, dayW);
-        var path = "M" + x1 + "," + y1 +
-          " H" + (x1 + gap / 2) +
-          " V" + y2 +
-          " H" + x2;
+
+        // Two routes. Forward: out of the source, across, into the target.
+        // Backward (x2 behind x1, which a lead or an SF tie can produce
+        // legitimately): step out past both ends and come back, so the line
+        // stays readable instead of doubling back through the bars it links.
+        // A tie between two points at the same instant -- a milestone and the
+        // activity it gates -- lands within a day-width of itself. That is a
+        // short hook, not a backwards arrow, and routing it the long way round
+        // makes a correct schedule look wrong. The jog is for links that really
+        // do run backwards: a lead, or a Start-Finish tie.
+        var path;
+        if (x2 >= x1 - dayW) {
+          path = "M" + x1 + "," + y1 +
+            " H" + (x1 + gap / 2) +
+            " V" + y2 +
+            " H" + x2;
+        } else {
+          var lane = Math.max(y1, y2) + ROW_H / 2 - 3;
+          path = "M" + x1 + "," + y1 +
+            " H" + (x1 + gap / 2) +
+            " V" + lane +
+            " H" + (x2 - gap / 2) +
+            " V" + y2 +
+            " H" + x2;
+        }
+
         var driving = from.critical && to.critical;
-        links.appendChild(el("path", {
+        var arrow = el("path", {
           d: path,
           class: driving ? "link link-critical" : "link",
           "marker-end": "url(#" + (driving ? "arrow-critical" : "arrow") + ")"
-        }));
+        });
+        // The type is worth saying out loud: an SS tie drawn correctly still
+        // looks surprising next to an FS one, and the tooltip is the cheapest
+        // place to explain why.
+        arrow.appendChild(el("title", {},
+          pred.id + " -> " + (row.code || row.activity_id) + "  " + pred.type +
+          (pred.lag_days ? (pred.lag_days > 0 ? "+" : "") + pred.lag_days + "d" : "")));
+        links.appendChild(arrow);
       });
     });
 

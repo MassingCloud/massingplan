@@ -43,45 +43,6 @@
   {% endif %}
 </section>
 
-{% if health %}
-<section>
-  <h2>Schedule quality</h2>
-  <p class="note">
-    {{ health.assessed }} checks ran, {{ health.skipped }} were skipped for want
-    of data, {{ health.failed }} failed. Skipped checks are excluded from the
-    score — a schedule is not an A because four of the checks could not run.
-    {% if not health.optimisable %}
-    <strong>Not safe to optimise:</strong> the logic, float or critical-path
-    length index failed, and every optimisation decision reads from those.
-    {% endif %}
-  </p>
-  <table class="checks">
-    <thead>
-      <tr><th>#</th><th>Check</th><th>Status</th><th>Value</th><th>Threshold</th><th>Detail</th></tr>
-    </thead>
-    <tbody>
-      {% for check in health.checks %}
-      <tr class="status-{{ check.status }}">
-        <td>{{ check.number }}</td>
-        <td>{{ check.name }}</td>
-        <td><span class="pill pill-{{ check.status }}">{{ check.status }}</span></td>
-        <td>{{ check.value if check.value is not none else "—" }}</td>
-        <td class="muted">{{ check.threshold }}</td>
-        <td>
-          {{ check.detail }}
-          {% if check.offenders %}
-          <details>
-            <summary>{{ check.offender_count }} offender{{ "" if check.offender_count == 1 else "s" }}</summary>
-            <p class="offenders">{{ check.offenders | join(", ") }}{% if check.offender_count > check.offenders | length %}, and {{ check.offender_count - (check.offenders | length) }} more{% endif %}</p>
-          </details>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
-{% endif %}
 
 {% if project %}
 <section>
@@ -208,6 +169,46 @@
     </tbody>
   </table>
 </section>
+
+{% if health %}
+<section>
+  <h2>Schedule quality</h2>
+  <p class="note">
+    {{ health.assessed }} checks ran, {{ health.skipped }} were skipped for want
+    of data, {{ health.failed }} failed. Skipped checks are excluded from the
+    score — a schedule is not an A because four of the checks could not run.
+    {% if not health.optimisable %}
+    <strong>Not safe to optimise:</strong> the logic, float or critical-path
+    length index failed, and every optimisation decision reads from those.
+    {% endif %}
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>#</th><th>Check</th><th>Status</th><th>Value</th><th>Threshold</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      {% for check in health.checks %}
+      <tr class="status-{{ check.status }}">
+        <td>{{ check.number }}</td>
+        <td>{{ check.name }}</td>
+        <td><span class="pill pill-{{ check.status }}">{{ check.status }}</span></td>
+        <td>{{ check.value if check.value is not none else "—" }}</td>
+        <td class="muted">{{ check.threshold }}</td>
+        <td>
+          {{ check.detail }}
+          {% if check.offenders %}
+          <details>
+            <summary>{{ check.offender_count }} offender{{ "" if check.offender_count == 1 else "s" }}</summary>
+            <p class="offenders">{{ check.offenders | join(", ") }}{% if check.offender_count > check.offenders | length %}, and {{ check.offender_count - (check.offenders | length) }} more{% endif %}</p>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 
 {% if issues %}
 <section>

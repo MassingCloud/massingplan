@@ -4,8 +4,8 @@
     {
       "name": "massingplan",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "flask", "--app", "massingplan.app:create_app", "run", "--port", "5111"],
-      "port": 5111
+      "runtimeArgs": ["-m", "flask", "--app", "massingplan.app:create_app", "run", "--port", "5117"],
+      "port": 5117
     }
   ]
 }

@@ -54,6 +54,19 @@ def session():  # type: ignore[no-untyped-def]
     engine.dispose()
 
 
+def test_the_shipped_hashing_cost_is_the_owasp_floor() -> None:
+    """The suite runs argon2 cheaply (see `conftest.cheap_password_hashing`),
+    so this asserts what the module *ships* with rather than what is configured
+    right now. `SHIPPED_PARAMETERS` is captured at import, before the harness
+    lowers anything -- otherwise turning the cost down for speed would also turn
+    it down in production, silently, and every test would still pass.
+
+    64MiB, three passes, parallelism 2 is the OWASP floor at the time of
+    writing. Lowering it is a decision, not a refactor.
+    """
+    assert accounts.SHIPPED_PARAMETERS == (3, 65536, 2)
+
+
 def make_user(session, email: str, role: Role = Role.OWNER, org: str | None = None):  # type: ignore[no-untyped-def]
     return accounts.register(
         session,

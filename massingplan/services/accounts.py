@@ -57,17 +57,37 @@ class AccountError(RuntimeError):
 # password hashing at all.
 
 
+# Parameters, not defaults-by-accident. ~64MB and three passes is the
+# OWASP-recommended floor at the time of writing and costs roughly 50ms per
+# sign-in, which is the point: it has to be slow.
+TIME_COST = 3
+MEMORY_COST_KIB = 65536
+PARALLELISM = 2
+
+#: What this module *ships* with, captured at import so a harness that lowers
+#: the cost cannot also lower the definition of the floor. `test_auth.py`
+#: asserts this tuple, so weakening production hashing fails a test even while
+#: the suite itself runs cheaply.
+SHIPPED_PARAMETERS = (TIME_COST, MEMORY_COST_KIB, PARALLELISM)
+
+
 def _hasher():  # type: ignore[no-untyped-def]
+    """The password hasher.
+
+    The three constants above are read at call time rather than baked in, so a
+    test suite can turn the cost down. That is not a nicety: at 64MiB per hash
+    and several hundred registrations, the suite allocates tens of gigabytes
+    over its run and fails outright on a machine under memory pressure with
+    `argon2.exceptions.HashingError: Memory allocation error` -- which looks
+    like a code defect and is not one.
+    """
     try:
         from argon2 import PasswordHasher
     except ImportError as exc:  # pragma: no cover - exercised by the no-extras job
         raise AccountError(
             "password hashing needs argon2-cffi. Install it with: pip install 'massingplan[auth]'"
         ) from exc
-    # Parameters, not defaults-by-accident. ~64MB and three passes is the
-    # OWASP-recommended floor at the time of writing and costs roughly 50ms per
-    # sign-in, which is the point: it has to be slow.
-    return PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
+    return PasswordHasher(time_cost=TIME_COST, memory_cost=MEMORY_COST_KIB, parallelism=PARALLELISM)
 
 
 def hash_password(password: str) -> str:

@@ -67,9 +67,19 @@ def test_the_renderer_declares_the_row_shape_it_reads() -> None:
     assert "@typedef {object} Row" in SOURCE
 
 
+def _row_typedef() -> str:
+    """Just the `Row` block. The file declares other typedefs -- `Predecessor`,
+    `Geometry` -- whose properties are not row keys, and scanning the whole file
+    for `@property` swept those in and made this test fail on a correct payload.
+    """
+    block = re.search(r"@typedef \{object\} Row\b(.*?)\*/", SOURCE, re.S)
+    assert block, "the Row typedef is gone"
+    return block.group(1)
+
+
 def test_every_property_the_typedef_declares_is_actually_sent(client) -> None:  # type: ignore[no-untyped-def]
     """The half that was not written down is the half that went missing."""
-    declared = set(re.findall(r"@property \{[^}]+\} (\w+)", SOURCE))
+    declared = set(re.findall(r"@property \{[^}]+\} (\w+)", _row_typedef()))
     assert declared, "the Row typedef declares no properties"
 
     sent = set(_chart_data(client)[0])
@@ -93,6 +103,58 @@ def test_dependency_arrows_have_something_to_draw(client) -> None:  # type: igno
     )
 
 
+def test_each_predecessor_carries_its_type_and_lag(client) -> None:  # type: ignore[no-untyped-def]
+    """Bare ids are not enough to draw the arrow in the right place.
+
+    Without the type the renderer cannot tell a Start-Start tie from a
+    Finish-Start one, so it anchors every arrow at the predecessor's finish --
+    and since an SS successor normally starts *before* its predecessor ends,
+    the arrow runs right-to-left and reads as time flowing backwards.
+    """
+    rows = _chart_data(client)
+    preds = [p for row in rows for p in row["predecessors"]]
+    assert preds, "the demo schedule has no relationships"
+    for pred in preds:
+        assert set(pred) == {"id", "type", "lag_days"}, pred
+        assert pred["type"] in {"FS", "SS", "FF", "SF"}, pred
+        assert isinstance(pred["lag_days"], int), pred
+
+    kinds = {p["type"] for p in preds}
+    assert {"SS", "FF"} <= kinds, (
+        f"the demo schedule no longer exercises non-FS ties ({sorted(kinds)}), "
+        "so this test would not catch the backwards-arrow bug"
+    )
+
+
+def test_a_milestone_has_no_width_in_the_geometry_map() -> None:
+    """A milestone is a point in time, and giving it the bar width put its
+    outgoing anchor a full day to the right of the diamond. An arrow to a
+    successor starting that same day then ran backwards -- two pixels zoomed
+    out, forty pixels zoomed in.
+
+    Known limitation, deliberately not papered over: a *finish* milestone dated
+    the same day its predecessor finishes still sits one day-width left of that
+    bar's right edge, because the bar occupies the whole day and the milestone
+    is a point at the day's start. Telling the two milestone kinds apart needs
+    `kind` in the payload, which `to_rows()` does not carry. It renders as a
+    short hook rather than a backwards arrow, which is the conventional drawing.
+    """
+    assert "milestone ? 0 : w" in CODE
+
+
+def test_the_renderer_anchors_each_end_by_relationship_type() -> None:
+    """The arrow endpoints, asserted where they are chosen.
+
+    FS and FF leave the predecessor's finish; SS and SF leave its start. FS and
+    SS arrive at the successor's start; FF and SF at its finish. Anchoring every
+    arrow finish-to-start is what drew SS and FF links backwards.
+    """
+    assert 'pred.type === "FS" || pred.type === "FF"' in CODE, "no finish-side anchor rule"
+    assert 'pred.type === "FS" || pred.type === "SS"' in CODE, "no start-side anchor rule"
+    assert "fromFinish ? from.x + from.w : from.x" in CODE
+    assert "toStart ? to.x : to.x + to.w" in CODE
+
+
 def test_the_arrow_loop_does_not_swallow_a_missing_contract() -> None:
     """`(row.predecessors || [])` is what made the bug silent: absent became
     empty, and empty draws nothing. Reading the key directly means a server that
@@ -108,6 +170,19 @@ def test_bars_are_labelled_with_the_planners_code(client) -> None:  # type: igno
     """
     assert "row.code || row.activity_id" in CODE
     assert "code" in _chart_data(client)[0]
+
+
+# -- page order ------------------------------------------------------------
+
+
+def test_schedule_quality_comes_after_the_activities(client) -> None:  # type: ignore[no-untyped-def]
+    """The chart and the rows are what a planner opens the page for; the DCMA
+    assessment is a verdict *on* them, so it reads after rather than before.
+    """
+    html = client.get("/demo").get_data(as_text=True)
+    order = re.findall(r"<h2>([^<]+)", html)
+    assert "Schedule quality" in order and "Activities" in order, order
+    assert order.index("Schedule quality") > order.index("Activities"), order
 
 
 # -- the CSP the whole design depends on -----------------------------------

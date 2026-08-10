@@ -35,9 +35,12 @@ assumes it is behind something; it does not terminate TLS itself.
 `127.0.0.1`. Setting it to `*` lets any client spoof its own source address,
 which is what the audit log records.
 
-**Put a rate limit at your ingress.** Account lock-out covers credential
-stuffing. It does not cover a scripted flood of Monte Carlo requests, and there
-is no in-app rate limiter yet — see `SECURITY.md`.
+**Put a rate limit at your ingress anyway.** There is one in the app, on the
+credential and compute endpoints, but its store is per-process: with
+`WEB_CONCURRENCY=4` the effective limit is four times what is configured. The
+app logs a warning at startup when it notices, and `massingplan check` prints
+the scope. A limit at the ingress is the one that actually holds across
+replicas.
 
 ## Configuration
 
@@ -55,7 +58,8 @@ Everything is read from the environment with a `MASSINGPLAN_` prefix.
 | `WEB_CONCURRENCY` | `2 × cores + 1` | Bounded by your database's connection limit, not by this process |
 | `WEB_THREADS` | `4` | |
 | `WEB_TIMEOUT` | `120` | A 2,000-iteration Monte Carlo is CPU-bound and slow on purpose |
-| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Your load balancer's address |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Your load balancer's address. `*` lets any client spoof the address the audit log records |
+| `MASSINGPLAN_RATE_LIMIT` | `1` | `0` disables the in-app limiter |
 
 ## Migrations
 

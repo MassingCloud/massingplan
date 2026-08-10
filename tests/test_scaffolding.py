@@ -283,3 +283,69 @@ def test_assess_exits_non_zero_when_a_check_fails(tmp_path: Path) -> None:
         )
     )
     assert main(["assess", str(network)]) == 1
+
+
+# -- what the package claims to be -----------------------------------------
+
+#: Capabilities SPEC.md defers to P11+. None of them is implemented, so none may
+#: be advertised. `last planner` and `line of balance` were both in `keywords`
+#: while no line of either existed.
+DEFERRED_CAPABILITIES = {
+    "last planner": ("last.planner", "make.ready", "weekly work plan", "pull plan"),
+    "line of balance": ("line.of.balance", "line_of_balance"),
+    "takt": ("takt",),
+    "location based": ("location.based", "class Location", "class Zone"),
+}
+
+
+def test_no_keyword_advertises_something_that_is_not_built() -> None:
+    """Keywords are what PyPI shows and what people search on.
+
+    Advertising an unshipped capability is the same defect as a README
+    describing a directory that does not exist -- and this repo has now shipped
+    that twice: `AGENTS.md` described a `frontend/` bundle that was an empty
+    untracked directory, and `keywords` listed two P11+ features.
+    """
+    import re as _re
+
+    root = Path(__file__).resolve().parent.parent
+    block = _re.search(
+        r"^keywords = \[(.*?)^\]", (root / "pyproject.toml").read_text(), _re.S | _re.M
+    )
+    assert block, "the keywords list is gone"
+    keywords = {k.strip().strip('",') for k in block.group(1).splitlines() if k.strip().strip('",')}
+
+    advertised_but_absent = keywords & set(DEFERRED_CAPABILITIES)
+    assert not advertised_but_absent, (
+        f"{sorted(advertised_but_absent)} are advertised in `keywords` and are "
+        "SPEC.md P11+. Build it, or do not claim it."
+    )
+
+
+@pytest.mark.parametrize("capability", sorted(DEFERRED_CAPABILITIES))
+def test_a_deferred_capability_is_either_absent_or_no_longer_deferred(capability: str) -> None:
+    """Guard the guard, and make the list self-correcting.
+
+    If someone *does* build line-of-balance, this fails and points at the
+    keyword list -- so the advertisement gets added deliberately rather than
+    the capability shipping unadvertised forever.
+    """
+    import re as _re
+
+    root = Path(__file__).resolve().parent.parent
+    patterns = DEFERRED_CAPABILITIES[capability]
+    hits = []
+    for path in (root / "massingplan").rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for pattern in patterns:
+            if _re.search(pattern, text, _re.I):
+                hits.append(f"{path.relative_to(root)} matches {pattern!r}")
+
+    if hits:
+        pytest.fail(
+            f"{capability!r} looks implemented now:\n  " + "\n  ".join(hits[:10]) + "\n"
+            "Remove it from DEFERRED_CAPABILITIES, add the keyword to "
+            "pyproject.toml, and move it out of SPEC.md P11+."
+        )

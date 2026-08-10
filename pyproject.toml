@@ -19,10 +19,15 @@ keywords = [
     "p6",
     "xer",
     "dcma",
-    "last planner",
-    "line of balance",
+    "monte carlo",
+    "resource levelling",
     "flask",
 ]
+# `last planner` and `line of balance` were listed here and are **not built** --
+# both are SPEC.md P11+. Keywords are what PyPI shows and what people search on,
+# so advertising an unshipped capability is the same defect as a README
+# describing a directory that does not exist. `tests/test_scaffolding.py` now
+# fails if a deferred capability reappears here ahead of its implementation.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Flask",

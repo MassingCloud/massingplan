@@ -39,6 +39,12 @@ def main() -> int:
 
     failures: list[str] = []
     for module in pkgutil.walk_packages(massingplan.__path__, "massingplan."):
+        # The adoption kits are written against a *consumer's* package, which is
+        # not installed here -- see massingplan/integrations/massing/README.md.
+        # They are linted and type-checked; they are not importable, and that is
+        # the point of them living upstream rather than in the consumer.
+        if module.name.startswith("massingplan.integrations."):
+            continue
         try:
             __import__(module.name)
         except Exception as exc:  # noqa: BLE001 - the failure is the result

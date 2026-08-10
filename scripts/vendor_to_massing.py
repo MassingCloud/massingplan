@@ -42,7 +42,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "massingplan" / "core"
+KIT = REPO / "massingplan" / "integrations" / "massing"
 DEFAULT_TARGET = Path("C:/Server/modelmaker/services/api/src/massingplan")
+
+#: The adapter modules, and where they land relative to `services/api/`. Kept
+#: upstream because they change when *this* repo changes -- a new relationship
+#: type, a renamed row key -- so they travel with the engine rather than being
+#: maintained separately in the consumer.
+ADAPTER_FILES = {
+    "schedule_engine.py": "src/aec_api/schedule_engine.py",
+    "schedule_cpm.py": "src/aec_api/schedule_cpm.py",
+    "schedule_import.py": "src/aec_api/schedule_import.py",
+    "test_adoption.py": "tests/test_schedule_engine_vendored.py",
+}
 
 #: The core test modules the consumer runs. Excluded: tests that exercise the
 #: Flask app, which does not exist over there.
@@ -166,7 +178,7 @@ pytest services/api/tests/vendor_massingplan -q
 """
 
 
-def sync(target: Path, *, check: bool) -> int:
+def sync(target: Path, *, check: bool, engine_only: bool = False) -> int:
     if not SOURCE.is_dir():
         print(f"source not found: {SOURCE}", file=sys.stderr)
         return 2
@@ -240,8 +252,29 @@ def sync(target: Path, *, check: bool) -> int:
         encoding="utf-8",
     )
 
+    # The adapter. `--engine-only` leaves it alone, for a re-sync that should
+    # pick up engine fixes without touching adapter code the consumer may be
+    # mid-review on.
+    adapters = 0
+    if not engine_only:
+        api_root = target.parent.parent
+        for name, relative in ADAPTER_FILES.items():
+            source_file = KIT / name
+            if not source_file.is_file():
+                continue
+            destination = api_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, destination)
+            adapters += 1
+
     files = len(list(target.rglob("*.py")))
     print(f"vendored {files} modules and {copied} test modules to {target}")
+    if adapters:
+        print(f"copied {adapters} adapter modules into {target.parent.parent}")
+        print(
+            "still to apply by hand: integrations/massing/research-importer.patch "
+            "(the P6 importer) and vendor-massingplan-drift.yml"
+        )
     print(f"pinned at {sha} (digest {tree_digest(SOURCE)})")
     return 0
 
@@ -250,8 +283,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--check", action="store_true", help="report drift, change nothing")
+    parser.add_argument(
+        "--engine-only",
+        action="store_true",
+        help="sync core/ but leave the adapter alone (for a mid-review consumer)",
+    )
     args = parser.parse_args()
-    return sync(args.target, check=args.check)
+    return sync(args.target, check=args.check, engine_only=args.engine_only)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,97 @@
+﻿name: Vendored massingplan drift
+
+# The pin in services/api/src/massingplan/VENDOR.md is only worth having if
+# somebody notices when it goes stale. Weekly, plus on any change to the
+# vendored tree so a hand-edit is caught immediately.
+#
+# The failure mode this is written against: a drift check that cannot reach
+# upstream, or cannot find the pin, and reports "all clear". That is worse than
+# no check, because it is trusted. Every unexpected condition here exits
+# non-zero.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  pull_request:
+    paths:
+      - "services/api/src/massingplan/**"
+      - "services/api/tests/vendor_massingplan/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pin
+        id: pin
+        run: |
+          set -euo pipefail
+          VENDOR=services/api/src/massingplan/VENDOR.md
+          test -f "$VENDOR" || { echo "::error::$VENDOR is missing"; exit 2; }
+          SHA=$(grep -oP '^\| Commit \| `\K[0-9a-f]{40}' "$VENDOR" || true)
+          if [ -z "$SHA" ]; then
+            echo "::error::no 40-character commit SHA in $VENDOR."
+            echo "::error::An unpinned vendor copy cannot be re-created. Run"
+            echo "::error::scripts/vendor_to_massing.py from a committed massingplan checkout."
+            exit 2
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "pinned at $SHA"
+
+      - name: Compare against upstream HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.pin.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # A failed query exits non-zero rather than falling through to a
+          # comparison against an empty string, which would silently pass.
+          if ! HEAD_SHA=$(gh api repos/MassingCloud/massingplan/commits/main --jq .sha 2>/dev/null); then
+            echo "::error::could not read MassingCloud/massingplan. This job cannot"
+            echo "::error::tell you the vendor copy is current, so it fails rather"
+            echo "::error::than saying nothing is wrong."
+            exit 2
+          fi
+          echo "upstream HEAD: $HEAD_SHA"
+          if [ "$HEAD_SHA" = "$PINNED" ]; then
+            echo "vendored copy is at upstream HEAD"
+            exit 0
+          fi
+          BEHIND=$(gh api "repos/MassingCloud/massingplan/compare/$PINNED...$HEAD_SHA" --jq .ahead_by)
+          echo "::warning::the vendored massingplan is $BEHIND commits behind upstream."
+          echo "::warning::Re-sync with: python scripts/vendor_to_massing.py"
+          gh api "repos/MassingCloud/massingplan/compare/$PINNED...$HEAD_SHA" \
+            --jq '.commits[] | "  \(.sha[0:8])  \(.commit.message | split("\n")[0])"'
+
+  vendored-tests:
+    # Upstream's own tests, run here. A vendored library the consumer never
+    # exercises is a fork nobody has noticed yet.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - name: Run upstream's test modules against the vendored copy
+        working-directory: services/api
+        env:
+          PYTHONPATH: src
+        run: pytest tests/vendor_massingplan tests/test_schedule_engine_vendored.py -q
+
+      - name: Refuse a locally edited vendor tree
+        run: |
+          set -euo pipefail
+          # VENDOR.md states "Local deviations -- NONE". If somebody patched a
+          # file here instead of upstream, the next re-sync silently reverts it,
+          # and the bug comes back with no trace of the fix.
+          if ! grep -q 'Local deviations | \*\*NONE\*\*' services/api/src/massingplan/VENDOR.md; then
+            echo "::error::VENDOR.md no longer claims zero local deviations."
+            echo "::error::Fix it upstream in MassingCloud/massingplan and re-sync."
+            exit 1
+          fi

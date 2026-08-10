@@ -37,6 +37,12 @@ def create_app(settings: Any = None) -> Any:
     init_engine(resolved.database_url)
     csrf.init_app(app)
 
+    from .services.ratelimit import RateLimiter, warn_if_multi_worker
+
+    limiter = RateLimiter(enabled=resolved.rate_limit_enabled)
+    app.extensions["massingplan_ratelimit"] = limiter
+    warn_if_multi_worker(limiter, resolved.web_concurrency)
+
     from .blueprints.auth import bp as auth_bp
     from .blueprints.main import bp as main_bp
     from .blueprints.schedule_api import bp as api_bp
@@ -58,6 +64,63 @@ def create_app(settings: Any = None) -> Any:
             request.headers.get(logging_config.REQUEST_ID_HEADER) or logging_config.new_request_id()
         )
         deps.load_principal()
+
+    @app.before_request
+    def enforce_rate_limit():  # type: ignore[no-untyped-def]
+        """Keyed by the authenticated subject where there is one, else the
+        client address.
+
+        Keying an unauthenticated endpoint by address is imperfect -- a NAT
+        shares one -- but the alternative on a sign-in form is keying by the
+        submitted email, which lets an attacker lock out an account they merely
+        know the address of.
+        """
+        principal = deps.current_principal()
+        identity = principal.subject_id or (request.remote_addr or "unknown")
+        decision = limiter.check(request.endpoint or "", identity)
+        if decision is None or decision.allowed:
+            return None
+        logging_config.log(
+            logger,
+            logging.WARNING,
+            "rate limited",
+            request_id=g.get("request_id", ""),
+            endpoint=request.endpoint,
+            limit=str(decision.limit),
+        )
+        if deps.wants_json():
+            body = jsonify(
+                {
+                    "error": {
+                        "code": "rate_limited",
+                        "message": f"too many requests; the limit is {decision.limit}",
+                        "retry_after_seconds": decision.retry_after_seconds,
+                    }
+                }
+            )
+            response = app.make_response((body, 429))
+        else:
+            response = app.make_response(
+                (
+                    render_template(
+                        "error.html",
+                        error=type(
+                            "E",
+                            (),
+                            {
+                                "message": "Too many requests.",
+                                "detail": (
+                                    f"The limit on this action is {decision.limit}. "
+                                    f"Try again in {decision.retry_after_seconds} seconds."
+                                ),
+                            },
+                        )(),
+                    ),
+                    429,
+                )
+            )
+        response.headers["Retry-After"] = str(decision.retry_after_seconds)
+        return response
 
     @app.after_request
     def finish_request(response):  # type: ignore[no-untyped-def]

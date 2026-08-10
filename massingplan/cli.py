@@ -23,7 +23,7 @@ def _cmd_check(_args: argparse.Namespace) -> int:
     while the container reads a different one.
     """
     from .config import Settings
-    from .services import entitlement, identity, storage
+    from .services import entitlement, identity, ratelimit, storage
 
     settings = Settings()
     try:
@@ -42,12 +42,15 @@ def _cmd_check(_args: argparse.Namespace) -> int:
     report = {
         "env": settings.env,
         "max_upload_bytes": settings.max_upload_bytes,
-        "persistence": "none (stateless; schedules are computed per request)",
+        "database": settings.database_url,
         "secret_key": f"set ({len(secret)} chars, sha ...{fingerprint})",
         "entitlement": entitlement.resolve("standalone").name,
         "identity": identity.resolve("local").name,
         "storage": storage.LocalStorage(Path("instance/storage")).name,
     }
+    limiter = ratelimit.RateLimiter(enabled=settings.rate_limit_enabled)
+    described = limiter.describe()
+    report["rate_limit"] = f"{described['store']} store, {described['scope']}"
     for key, value in report.items():
         print(f"{key:20} {value}")
 

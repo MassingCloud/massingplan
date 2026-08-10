@@ -27,6 +27,13 @@ class Settings:
         default_factory=lambda: int(os.getenv("MASSINGPLAN_MAX_UPLOAD_BYTES", 16 * 1024 * 1024))
     )
 
+    rate_limit_enabled: bool = field(
+        default_factory=lambda: os.getenv("MASSINGPLAN_RATE_LIMIT", "1") != "0"
+    )
+    #: Read only to warn about it. The limiter's store is per-process, so N
+    #: workers means N times the configured limit -- and a limiter that
+    #: multiplies silently is worse than none, because it is believed.
+    web_concurrency: int = field(default_factory=lambda: int(os.getenv("WEB_CONCURRENCY", "1")))
     session_lifetime_seconds: int = field(
         default_factory=lambda: int(os.getenv("MASSINGPLAN_SESSION_LIFETIME", 12 * 3600))
     )

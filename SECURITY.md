@@ -71,6 +71,11 @@ often a query.
 it recorded is a second copy of the credential, in the place with the loosest
 access controls.
 
+**Rate limiting.** Fixed-window, keyed by the authenticated subject where there
+is one and by client address otherwise. Sign-in is keyed by address rather than
+by the submitted email on purpose: keying by email lets an attacker lock out an
+account whose address they merely know. See the limitation below.
+
 **Audit.** Append-only, actor by id, and a test asserts no audit row ever
 contains a usable key or a password.
 
@@ -89,9 +94,11 @@ marketing document.
 
 - **No MFA.** Password plus session only.
 - **No SSO.** The OIDC adapter seam exists; its implementation does not.
-- **No rate limiting on the HTTP surface.** Account lock-out covers credential
-  stuffing; it does not cover a scripted flood of expensive scheduling requests.
-  Put a rate limit at your ingress until this lands.
+- **Rate limiting is per-process.** Credential endpoints and the expensive
+  compute endpoints are limited, but the store is in-memory: with four workers
+  the effective limit is four times what was configured. The app logs a warning
+  at startup when it detects more than one worker, and `massingplan check`
+  prints the scope. For a real limit across replicas, put one at your ingress.
 - **No encryption at rest for schedule content** beyond whatever the database
   and the disk provide.
 - **No signed webhooks in use.** The HMAC primitives exist in `security.py` and

@@ -38,6 +38,11 @@ def session() -> Session:  # type: ignore[misc]
         repo.ensure_default_organization(s)
         s.commit()
         yield s
+    # Disposed, not left to the collector. A pooled connection that is
+    # garbage collected while open is silent on 3.11 and 3.12 and a
+    # ResourceWarning on 3.13 -- which, with warnings as errors, fails the
+    # build on one interpreter and not the others.
+    engine.dispose()
 
 
 def fixture_schedule() -> ExchangeSchedule:

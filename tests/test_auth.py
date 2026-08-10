@@ -47,6 +47,11 @@ def session():  # type: ignore[no-untyped-def]
         repo.ensure_default_organization(handle)
         handle.commit()
         yield handle
+    # Disposed, not left to the collector. A pooled connection that is
+    # garbage collected while open is silent on 3.11 and 3.12 and a
+    # ResourceWarning on 3.13 -- which, with warnings as errors, fails the
+    # build on one interpreter and not the others.
+    engine.dispose()
 
 
 def make_user(session, email: str, role: Role = Role.OWNER, org: str | None = None):  # type: ignore[no-untyped-def]

@@ -64,7 +64,25 @@ def _ensure_sqlite_directory(url: str) -> None:
 
 
 def init_engine(url: str, *, echo: bool = False) -> Engine:
+    """Bind the process to a database. Replacing an engine disposes the old one.
+
+    Rebinding without disposing leaves the previous engine's pool holding a live
+    DBAPI connection with nothing referencing it. The engine object is then
+    garbage collected and the connection goes with it -- **open**. On SQLite
+    that is a leaked file handle; against Postgres it is a server-side session
+    that only clears when the process exits, so a deployment that reconfigures
+    at runtime bleeds connections until it hits `max_connections`.
+
+    It went unnoticed because nothing complained: a connection collected while
+    open is silent on Python 3.11 and 3.12. Python 3.13 added a
+    `ResourceWarning` for exactly this, and it surfaced the moment warnings
+    became errors -- the `test (3.13)` job failed while 3.11 and 3.12 passed,
+    which is the signature of a real leak the older runtimes simply did not
+    mention.
+    """
     global _engine, _Session
+    if _engine is not None:
+        _engine.dispose()
     _ensure_sqlite_directory(url)
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     _engine = create_engine(url, echo=echo, future=True, connect_args=connect_args)

@@ -1,0 +1,46 @@
+# `docker compose up` is the whole install.
+#
+# The defaults below are spelled out rather than hidden in an env file, so an
+# operator can see exactly what they are running before they change it.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/massingcloud/massingplan:dev
+    environment:
+      MASSINGPLAN_ENV: production
+      # Development value, and obviously one. Replace it: four workers each
+      # generating their own key log users out at random.
+      MASSINGPLAN_SECRET_KEY: ${MASSINGPLAN_SECRET_KEY:-change-me-before-you-expose-this}
+      MASSINGPLAN_DATABASE_URL: postgresql+psycopg://massingplan:massingplan@db:5432/massingplan
+      MASSINGPLAN_LOG_LEVEL: INFO
+      WEB_CONCURRENCY: 2
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        # Gated on the healthcheck, not on the container starting. Postgres
+        # accepts connections before it can serve them; `depends_on` alone only
+        # waits for the process.
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: massingplan
+      POSTGRES_PASSWORD: massingplan
+      POSTGRES_DB: massingplan
+    volumes:
+      - massingplan_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U massingplan -d massingplan"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  massingplan_db:

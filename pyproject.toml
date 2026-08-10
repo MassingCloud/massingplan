@@ -60,6 +60,10 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.9",
     "import-linter>=2.0",
+    # The deployment tests read the compose file and the workflow as data
+    # rather than grepping them as text.
+    "PyYAML>=6.0",
+    "types-PyYAML",
 ]
 
 [project.urls]

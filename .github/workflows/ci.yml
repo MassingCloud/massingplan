@@ -40,6 +40,69 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q --cov=massingplan --cov-report=term-missing
 
+  postgres:
+    # SQLite is what developers run; Postgres is what production runs. The
+    # differences are silent -- no native enum, foreign keys off by default,
+    # naive datetimes from a timezone-aware column. Each has caused a bug here.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: massingplan
+          POSTGRES_PASSWORD: massingplan
+          POSTGRES_DB: massingplan
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U massingplan"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      MASSINGPLAN_TEST_POSTGRES_URL: postgresql+psycopg://massingplan:massingplan@localhost:5432/massingplan
+      MASSINGPLAN_DATABASE_URL: postgresql+psycopg://massingplan:massingplan@localhost:5432/massingplan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,postgres]"
+      - name: Migrate up, down and up again on Postgres
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          alembic check
+      - name: Run the dialect suite against Postgres
+        run: pytest tests/test_dialects.py -q
+      - name: Prove the Postgres tests did not silently skip
+        # `-q` prints "3 passed, 2 skipped" just as happily either way. Without
+        # this the job is green whether or not the database was ever reached.
+        run: |
+          pytest tests/test_dialects.py -q -rs 2>&1 | tee out.txt
+          if grep -q "MASSINGPLAN_TEST_POSTGRES_URL" out.txt; then
+            echo "::error::the Postgres tests skipped; the service was not reachable"
+            exit 1
+          fi
+
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Up, down, up, and no autogenerate drift
+        # `alembic check` is the important one: it fails when a model has
+        # changed and nobody wrote the migration, which otherwise surfaces as a
+        # missing column in production.
+        env:
+          MASSINGPLAN_DATABASE_URL: sqlite:///ci.db
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          alembic check
+
   timeaxis-kernel:
     # The one invariant every other module assumes without checking. A lattice
     # optimisation that shaves a branch cannot land without someone proving the
@@ -57,7 +120,7 @@ jobs:
             --cov-report=term-missing --cov-fail-under=100
 
   determinism:
-    # Same input, same answer -- across runs and across hash seeds. Without a
+    # Same input, same answer -- across runs and hash seeds. Without a
     # total-order tiebreak on every sort, set iteration order leaks into
     # levelling and the same file produces different dates between runs. An
     # optimiser whose answer changes cannot be reviewed, approved, or defended.
@@ -68,15 +131,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - name: Run the engine suite under two different hash seeds
+      - name: Run the suite under two different hash seeds
         run: |
-          PYTHONHASHSEED=0 pytest tests -q -p no:randomly
-          PYTHONHASHSEED=524287 pytest tests -q -p no:randomly
+          PYTHONHASHSEED=0 pytest tests -q
+          PYTHONHASHSEED=524287 pytest tests -q
 
   purity:
     # `core` is copied verbatim into another product's source tree, where none
-    # of this repo's dependencies are guaranteed to exist. This job proves it
-    # imports with nothing but the standard library installed -- the contract in
+    # of this repo's dependencies are guaranteed to exist. This proves it
+    # imports with nothing but the standard library -- the contract in
     # pyproject.toml is checked statically, this checks it for real.
     runs-on: ubuntu-latest
     steps:
@@ -87,11 +150,13 @@ jobs:
       - name: Import every core module with no dependencies installed
         run: |
           python - <<'PY'
-          import pathlib, importlib.util, sys
-          root = pathlib.Path("massingplan/core")
+          import importlib
+          import pathlib
+          import sys
+
           sys.path.insert(0, ".")
           failures = []
-          for path in sorted(root.glob("*.py")):
+          for path in sorted(pathlib.Path("massingplan/core").glob("*.py")):
               name = f"massingplan.core.{path.stem}"
               try:
                   importlib.import_module(name)
@@ -139,3 +204,69 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: lint-imports
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,postgres,server]"
+      - name: Known vulnerabilities in the dependency tree
+        # Not `--strict`: pip-audit exits non-zero on its own lookup failures
+        # too, and a red build caused by the advisory service being down is a
+        # red build people learn to ignore.
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable
+      - name: Software bill of materials
+        run: |
+          pip install cyclonedx-bom
+          cyclonedx-py environment --output-format json --outfile sbom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile -t massingplan:ci .
+      - name: Boot it on SQLite and check both probes
+        run: |
+          docker run -d --name mp -p 8000:8000 \
+            -e MASSINGPLAN_SECRET_KEY=ci-not-a-secret \
+            massingplan:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/healthz
+          # `/readyz` must be genuinely ready, not merely answering. A container
+          # that reports itself healthy while nothing works is the failure this
+          # step exists to catch.
+          curl -fsS http://localhost:8000/readyz | grep -q '"status": "ready"'
+      - name: Refuse to boot without a secret key
+        run: |
+          if docker run --rm -e MASSINGPLAN_SECRET_KEY= massingplan:ci massingplan check; then
+            echo "::error::the image booted in production mode with no secret key"
+            exit 1
+          fi
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs mp || true
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3

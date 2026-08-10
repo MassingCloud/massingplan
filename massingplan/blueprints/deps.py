@@ -136,6 +136,42 @@ def pending_mfa_user_id() -> str | None:
     return session.get(SESSION_PENDING_MFA_KEY)
 
 
+def safe_next(target: str, *, fallback_endpoint: str = "main.projects_list") -> str:
+    """A post-sign-in destination, or the fallback. Never another origin.
+
+    An open redirect turns the sign-in page into a convincing launchpad for a
+    phishing link on your own domain: the URL the user checks really is yours.
+
+    `startswith("/") and not startswith("//")` is the obvious guard and it is
+    not enough. **Browsers normalise a backslash to a forward slash in the
+    authority position**, so `/\\evil.example.com` is fetched as
+    `//evil.example.com` by Chrome, Firefox and Safari alike -- it passes the
+    obvious check and redirects off site anyway. Anything with a backslash, a
+    scheme, or a control character is refused; what is left is a path.
+    """
+    candidate = (target or "").strip()
+    if not candidate.startswith("/"):
+        return url_for(fallback_endpoint)
+    if candidate.startswith("//"):
+        return url_for(fallback_endpoint)
+    # A backslash anywhere in the authority is the browser-normalisation trick
+    # above. Refusing it everywhere costs nothing -- no legitimate route here
+    # contains one.
+    if "\\" in candidate:
+        return url_for(fallback_endpoint)
+    # Control characters, including the tab and newline that some parsers strip
+    # before resolving the URL -- `/\t/evil.example.com` is the same attack with
+    # a different byte.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in candidate):
+        return url_for(fallback_endpoint)
+    # A colon in the first path segment reads as a scheme to some parsers, so
+    # `/javascript:alert(1)` is not something to hand back as a location.
+    first_segment = candidate.lstrip("/").split("/", 1)[0]
+    if ":" in first_segment:
+        return url_for(fallback_endpoint)
+    return candidate
+
+
 def web_session() -> Any:
     """The Flask session, behind a name.
 

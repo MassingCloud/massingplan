@@ -35,6 +35,25 @@ def require_a_credential() -> Any:
     if request.endpoint and request.endpoint.endswith("capabilities"):
         return None
     principal = deps.current_principal()
+    # A key, and *only* a key. This blueprint is exempt from CSRF, and that
+    # exemption is only sound because a bearer key is never sent ambiently by a
+    # browser. Accepting a session cookie here would make every endpoint below a
+    # CSRF-exempt, state-changing surface authenticated by a credential the
+    # browser attaches on its own -- with nothing but the required JSON content
+    # type between a malicious page and somebody's project list.
+    if principal.is_authenticated and principal.via != "api_key":
+        return jsonify(
+            {
+                "error": {
+                    "code": "unauthenticated",
+                    "message": (
+                        "this API does not accept a session cookie. Issue an API "
+                        "key from your account page and present it as "
+                        "`Authorization: Bearer mpln_...`"
+                    ),
+                }
+            }
+        ), 401
     if not principal.is_authenticated:
         return jsonify(
             {

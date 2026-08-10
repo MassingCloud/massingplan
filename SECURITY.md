@@ -122,6 +122,14 @@ marketing document.
   pinning narrows but does not close. Egress filtering at the network is the
   control that does close it.
 - **No penetration test.** Nobody outside the project has tried to break it.
+  `tests/test_adversarial.py` runs as its own CI job and attacks the app from
+  the outside — cross-tenant reads and writes, forged and revoked keys, session
+  fixation, cookie tampering, open redirect, stored XSS, SQL-looking input, XER
+  and HTTP header injection, mass assignment, XXE and entity expansion,
+  path traversal, upload limits, and authorisation as distinct from
+  authentication. It found three real bugs when it was written, which are fixed
+  and listed in `CHANGELOG.md`. It is still not a pentest: it tests the attacks
+  we thought of.
 
 ## Out of scope
 

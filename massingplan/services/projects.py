@@ -274,24 +274,29 @@ def stored_summary(project: Project) -> dict[str, Any]:
     `stale` is true when a project has never been scheduled, so the page can say
     "not computed yet" rather than printing a blank date that reads as a bug.
     """
-    dates = [a.computed_finish for a in project.activities if a.computed_finish]
-    starts = [a.computed_start for a in project.activities if a.computed_start]
-    baseline = project.current_baseline
-    finish = max(dates) if dates else None
+    # Every value here is a column on `projects`. Nothing below touches a
+    # relationship, which is the point: `repository.list_projects` loads the
+    # rows with the children suppressed, so a list of twenty projects is one
+    # query and twenty objects rather than twenty thousand.
+    finish = project.computed_finish
+    baseline_name = project.baseline_name
+    baseline_finish = project.baseline_finish
     slip = None
-    if baseline and baseline.project_finish and finish:
-        slip = (finish - baseline.project_finish).days
+    if baseline_finish and finish:
+        slip = (finish - baseline_finish).days
     return {
         "id": project.id,
         "code": project.code,
         "name": project.name,
         "data_date": project.data_date.isoformat() if project.data_date else None,
-        "project_start": min(starts).isoformat() if starts else None,
+        "project_start": project.computed_start.isoformat() if project.computed_start else None,
         "project_finish": finish.isoformat() if finish else None,
         "duration_working_days": None,
-        "activity_count": len(project.activities),
-        "critical_count": sum(1 for a in project.activities if a.is_critical),
-        "baseline": baseline.name if baseline else None,
+        "activity_count": project.activity_count,
+        "critical_count": project.critical_count,
+        "baseline": baseline_name or None,
+        # Signed days against the current baseline, or None when there is no
+        # baseline -- which is different from "on time" and must not render as 0.
         "slip_days": slip,
-        "stale": not dates,
+        "stale": finish is None,
     }

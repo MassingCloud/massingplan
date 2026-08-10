@@ -37,7 +37,46 @@ Keep a Changelog, Semantic Versioning. Grouped by the phase that produced it.
 - Postgres proven in CI, not assumed: migrations up-down-up, the dialect suite,
   and a step that fails if those tests silently skipped.
 
+- Two-factor authentication: TOTP with an inline SVG QR, secrets encrypted at
+  rest with Fernet, hashed single-use recovery codes, replay refused inside the
+  drift window. Off unless `massingplan[mfa]` is installed and
+  `MASSINGPLAN_ENCRYPTION_KEY` is set, in which case the page says so.
+- Signed outbound webhooks, queued in the caller's transaction and delivered by
+  `massingplan webhooks drain`. Every URL is vetted against its resolved
+  addresses at subscribe time and again before each delivery; the connection is
+  pinned to the address that was vetted.
+- `tests/test_adversarial.py` and `tests/test_performance.py`, each with its own
+  CI job — the first attacks the app from the outside, the second pins
+  complexity rather than stopwatch times.
+
 ### Fixed — bugs the work surfaced
+
+- **Self-service registration made strangers owners of the default
+  organisation.** Registering without naming an organisation joined the existing
+  default one as `OWNER`, so anybody who could reach the form could read every
+  project in the tenant that holds seeded and imported work. Registration now
+  always creates a new organisation; joining an existing one is by invitation.
+  Found by `test_posting_a_role_field_does_not_grant_it`.
+- **`/\evil.example.com` was an open redirect.** The guard was
+  `startswith("/") and not startswith("//")`, and browsers normalise a backslash
+  to a forward slash in the authority position — so that target passed the check
+  and navigated off site. Both redirect sites now share `deps.safe_next`, which
+  also refuses control characters and a colon in the first segment. Found by
+  `test_sign_in_will_not_bounce_you_off_site`.
+- **The JSON API accepted a session cookie.** It is exempt from CSRF on the
+  grounds that a bearer key is never sent ambiently by a browser — but
+  `current_principal()` also resolved from the session, which made every
+  endpoint a CSRF-exempt, state-changing surface behind an ambient credential.
+  The API now refuses cookie auth outright.
+- **The project list still ran a full CPM per row.** `stored_summary` was
+  written to fix this and the page never called it; calling it then loaded every
+  activity of every project instead. The headline is now six denormalised
+  columns on `projects`, written by `repository.write_back` and
+  `repository.set_baseline`, and the list loads no children at all. Migration
+  `0005` backfills existing rows — without that, every existing project would
+  read "not scheduled yet" until somebody opened it.
+- **`mfa` was referenced in `auth.sign_in` and never imported**, so every
+  sign-in returned 500.
 
 - **`ScheduleOutcome.data_date` reported the earliest early start**, not the
   date the schedule was computed from. DCMA checks 9, 11 and 14 all compare

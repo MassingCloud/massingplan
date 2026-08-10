@@ -96,9 +96,31 @@ def get_project(session: Session, project_id: str, organization_id: str | None) 
 
 
 def list_projects(session: Session, organization_id: str | None) -> Sequence[Project]:
-    return session.scalars(
-        scoped(Project, organization_id).order_by(Project.updated_at.desc())
-    ).all()
+    """Projects with **no children loaded**, for the list page.
+
+    Every relationship on `Project` is `lazy="selectin"`, which is right for a
+    project page and wrong for a list of them: loading twenty projects would
+    otherwise pull every activity, calendar, relationship and baseline of all
+    twenty -- twenty thousand ORM objects to draw twenty table rows.
+
+    `noload` suppresses that. It is safe because `projects.stored_summary` reads
+    only columns on `projects`, and a caller that wants the children should use
+    `session.get(Project, id)`, which loads them as before.
+    """
+    from sqlalchemy.orm import noload
+
+    statement = (
+        scoped(Project, organization_id)
+        .order_by(Project.updated_at.desc())
+        .options(
+            noload(Project.activities),
+            noload(Project.calendars),
+            noload(Project.relationships_),
+            noload(Project.baselines),
+            noload(Project.resources),
+        )
+    )
+    return session.scalars(statement).all()
 
 
 # -- store -----------------------------------------------------------------
@@ -251,6 +273,14 @@ def write_back(session: Session, project: Project, outcome: ScheduleOutcome) -> 
         activity.free_float_days = dates.free_float_days
         activity.is_critical = dates.is_critical
         activity.is_longest_path = activity_id in on_path
+
+    # The list-page headline, written here because this is the only place a
+    # computed schedule is persisted -- so the summary cannot drift from the
+    # activity rows it summarises.
+    project.computed_start = outcome.project_start
+    project.computed_finish = outcome.project_finish
+    project.activity_count = len(outcome.dates)
+    project.critical_count = sum(1 for d in outcome.dates.values() if d.is_critical)
     session.flush()
 
 
@@ -448,6 +478,12 @@ def set_baseline(
             )
         )
     project.baselines.append(baseline)
+    if make_current:
+        # Denormalised onto the project so the list page can show slip without
+        # loading every baseline of every project. Written only here, where the
+        # current baseline is chosen.
+        project.baseline_name = name
+        project.baseline_finish = outcome.project_finish
     session.flush()
     return baseline
 

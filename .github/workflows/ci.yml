@@ -119,6 +119,43 @@ jobs:
             --cov=massingplan.core.timeaxis --cov-branch \
             --cov-report=term-missing --cov-fail-under=100
 
+  adversarial:
+    # The app attacked on purpose: cross-tenant reads, session fixation, open
+    # redirect, stored XSS, header injection, mass assignment, XXE. Not a
+    # substitute for a penetration test -- SECURITY.md still says nobody outside
+    # the project has tried to break this. What it is: the classes of bug a
+    # pentest finds *and that a regression could quietly reintroduce*, so the
+    # second time is caught here rather than in a report.
+    #
+    # Its own job so a failure is unmistakable in the checks list. A security
+    # regression buried in "tests (3.12)" among six hundred dots is a security
+    # regression somebody merges.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/test_adversarial.py -q
+
+  performance:
+    # Complexity regressions, not stopwatch times. The wall-clock budgets carry
+    # roughly a 10x margin over a developer machine so a busy runner does not
+    # fail the build; the two ratio assertions are the ones that matter, because
+    # "10x the input took 100x the time" holds on any hardware.
+    #
+    # `--durations` so a run that passes but got slower leaves a trace in the
+    # log, rather than the first anybody hears being the failure two months on.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/test_performance.py -q --durations=12
+
   determinism:
     # Same input, same answer -- across runs and hash seeds. Without a
     # total-order tiebreak on every sort, set iteration order leaks into

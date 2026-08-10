@@ -15,7 +15,6 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from ..models import Organization
 from ..models.identity import Role
 from ..services import accounts, mfa
-from ..services import repository as repo
 from ..services.accounts import AccountError, SignInOutcome
 from . import deps
 
@@ -79,11 +78,7 @@ def sign_in() -> Any:
             actor_label=result.user.email,
             summary="signed in",
         )
-    # Only relative paths. An open redirect turns the sign-in page into a
-    # convincing launchpad for a phishing link on your own domain.
-    if target.startswith("/") and not target.startswith("//"):
-        return redirect(target)
-    return redirect(url_for("main.projects_list"))
+    return redirect(deps.safe_next(target))
 
 
 @bp.post("/sign-out")
@@ -104,21 +99,32 @@ def register() -> Any:
     display_name = request.form.get("display_name", "")
     organization_name = request.form.get("organization", "").strip()
 
+    # Registration always creates a *new* organisation. It used to fall back to
+    # the default one when no name was given, and give the registrant OWNER of
+    # it -- so anybody who could reach this form became an owner of the tenant
+    # holding every seeded and imported project, and could read all of it. Found
+    # by tests/test_adversarial.py. Joining an existing organisation is by
+    # invitation, which is a different route with a different check.
+    if not organization_name:
+        organization_name = (email.split("@")[0] or "New organisation").strip()[:120]
+
     try:
         with deps.committing() as session:
-            if organization_name:
-                # A new organisation, and the registrant owns it.
-                slug = organization_name.lower().replace(" ", "-")[:80]
-                existing = session.scalars(
-                    __import__("sqlalchemy").select(Organization).where(Organization.slug == slug)
-                ).first()
-                if existing is not None:
-                    raise AccountError("an organisation with that name already exists")
-                organization = Organization(name=organization_name, slug=slug)
-                session.add(organization)
-                session.flush()
-            else:
-                organization = repo.ensure_default_organization(session)
+            slug = "".join(
+                ch if ch.isalnum() or ch == "-" else "-"
+                for ch in organization_name.lower().replace(" ", "-")
+            )[:80].strip("-")
+            existing = session.scalars(
+                __import__("sqlalchemy").select(Organization).where(Organization.slug == slug)
+            ).first()
+            if existing is not None:
+                raise AccountError(
+                    "an organisation with that name already exists. Choose another, "
+                    "or ask an owner there to invite you."
+                )
+            organization = Organization(name=organization_name, slug=slug)
+            session.add(organization)
+            session.flush()
 
             user = accounts.register(
                 session,
@@ -215,6 +221,4 @@ def mfa_challenge() -> Any:
         )
 
     deps.sign_in(user, organization_id)
-    if target.startswith("/") and not target.startswith("//"):
-        return redirect(target)
-    return redirect(url_for("main.projects_list"))
+    return redirect(deps.safe_next(target))

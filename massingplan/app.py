@@ -50,9 +50,11 @@ def create_app(settings: Any = None) -> Any:
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp, url_prefix="/api/massingplan/v1")
-    # The JSON API authenticates with a bearer key rather than a session cookie,
-    # so a CSRF token would protect nothing. The defence there is that a key is
-    # never sent ambiently by a browser, plus a required JSON content type.
+    # The JSON API authenticates with a bearer key and *refuses* a session
+    # cookie, so a CSRF token would protect nothing: there is no ambient
+    # credential to forge a request with. That refusal is what makes this
+    # exemption sound, and it is enforced in `schedule_api.require_a_credential`
+    # rather than assumed here.
     csrf.exempt(api_bp)
 
     app.teardown_appcontext(deps.close_db)

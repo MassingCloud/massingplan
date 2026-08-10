@@ -60,23 +60,17 @@ def demo() -> Any:
 @bp.get("/projects")
 @deps.login_required
 def projects_list() -> Any:
-    rows = []
-    for project in repo.list_projects(deps.db(), deps.current_org()):
-        try:
-            outcome = projects.reschedule(deps.db(), project)
-            rows.append(projects.summary(project, outcome))
-        except projects.ProjectError as exc:
-            # An unschedulable project must still be listed and still be
-            # deletable. Hiding it means the only way to fix it is the database.
-            rows.append(
-                {
-                    "id": project.id,
-                    "code": project.code,
-                    "name": project.name,
-                    "error": str(exc),
-                    "slip_days": None,
-                }
-            )
+    # Read from the denormalised columns. Rescheduling to render a list is a
+    # full forward and backward pass plus a write-back *per row*, so fifty
+    # projects is fifty CPM runs and fifty transactions to draw a table nobody
+    # has clicked into -- and it degrades linearly with the thing a growing
+    # customer has more of. The columns are written on import and on every visit
+    # to a project page; `stale` covers the gap for one that has never been
+    # opened.
+    rows = [
+        projects.stored_summary(project)
+        for project in repo.list_projects(deps.db(), deps.current_org())
+    ]
     return render_template("projects.html", projects=rows)
 
 

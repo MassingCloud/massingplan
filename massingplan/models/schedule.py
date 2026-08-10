@@ -93,6 +93,29 @@ class Project(Base, TimestampMixin):
     )
     source_format: Mapped[str] = mapped_column(String(16), default="", nullable=False)
 
+    #: The headline, denormalised from the last computed schedule.
+    #:
+    #: Not a cache of something cheap. Rendering a project list from the
+    #: activity rows means loading every activity of every project -- twenty
+    #: projects of a thousand activities is twenty thousand ORM objects to draw
+    #: twenty table rows, and it degrades with exactly the thing a growing
+    #: customer has more of. These four columns make the list one query over one
+    #: table with no children loaded at all.
+    #:
+    #: Written by `repository.write_back`, the only place a computed schedule is
+    #: persisted, so they cannot drift from the rows they summarise. Nullable
+    #: because a project that has never been scheduled has no headline, and
+    #: `stored_summary` reports that as `stale` rather than printing a blank date
+    #: that reads as a bug.
+    computed_start: Mapped[date | None] = date_column()
+    computed_finish: Mapped[date | None] = date_column()
+    activity_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    critical_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: The current baseline's name and finish, denormalised for the same reason.
+    #: Kept in step by `repository.set_baseline`, the only writer.
+    baseline_name: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    baseline_finish: Mapped[date | None] = date_column()
+
     # `passive_deletes=True` throughout: the schema declares
     # `ondelete="CASCADE"`, so the database removes children itself. Without it
     # SQLAlchemy also issues a DELETE per child and then warns that it matched

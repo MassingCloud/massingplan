@@ -67,6 +67,17 @@ dev = [
     # rather than grepping them as text.
     "PyYAML>=6.0",
     "types-PyYAML",
+    # The MFA extras, so `tests/test_mfa.py` actually runs. Without them its
+    # `importorskip` skips all thirty tests and the job still reports green -- a
+    # feature whose tests always skip is a feature nobody tests.
+    #
+    # They stay listed under `mfa` too: a user installing the app should not be
+    # made to take a crypto dependency to schedule a job. The
+    # ignore-missing-imports entries remain for anyone running mypy on an
+    # install that has neither extra.
+    "pyotp>=2.9",
+    "segno>=1.6",
+    "cryptography>=42.0",
 ]
 
 [project.urls]
@@ -85,10 +96,17 @@ massingplan = ["py.typed", "templates/**/*", "static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+# `not performance` by default. Those tests measure wall-clock ratios, and
+# running them inside a full randomised suite on a loaded machine makes the
+# small baseline noisy enough to fail on nothing -- a flaky timing test in the
+# main run is worse than no timing test, because it teaches people to re-run
+# red builds. They have their own CI job, which passes `-m performance` to
+# override this.
+addopts = "-q --strict-markers -m 'not performance'"
 markers = [
     "kernel: the timeaxis adjoint invariant sweep (own CI job, 100% branch coverage)",
     "adapter: tests that exercise an optional adapter (SPEC.md 3.2)",
+    "performance: complexity budgets (own CI job; excluded from the default run)",
 ]
 
 [tool.coverage.run]
@@ -153,7 +171,10 @@ strict_equality = true
 plugins = []
 
 [[tool.mypy.overrides]]
-module = ["flask_wtf.*", "argon2.*", "pyotp.*", "segno.*"]
+# Optional extras. `lint` installs `[dev]` only, so these are genuinely absent
+# there -- which is the point: the code has to type-check on an install that
+# does not have them, because that install is a supported one.
+module = ["flask_wtf.*", "argon2.*", "pyotp.*", "segno.*", "cryptography.*"]
 ignore_missing_imports = true
 
 # The adoption kit is written against the consumer's package, which is not

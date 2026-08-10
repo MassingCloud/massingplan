@@ -14,6 +14,7 @@ investigated.
 from __future__ import annotations
 
 import io
+import re
 
 import pytest
 from sqlalchemy import select
@@ -72,6 +73,20 @@ def _client(app, email: str = "mine@example.com"):  # type: ignore[no-untyped-de
     client = app.test_client()
     client.post("/auth/sign-in", data={"email": email, "password": PASSWORD})
     return client
+
+
+CSRF_INPUT = re.compile(r'(name="csrf_token" value=")[^"]*(")')
+
+
+def _without_csrf(response) -> str:  # type: ignore[no-untyped-def]
+    """The body with the CSRF token blanked.
+
+    Two responses that should be indistinguishable to an attacker still differ
+    in that one field, because the token is timestamped. Masking it is what
+    makes "these two answers are the same" a statement about the answer rather
+    than about the clock.
+    """
+    return CSRF_INPUT.sub(r"\1MASKED\2", response.get_data(as_text=True))
 
 
 def _import(client, code: str = "TOWER", activity: str = "Excavate") -> str:
@@ -464,7 +479,14 @@ def test_sign_in_says_the_same_thing_whether_or_not_the_account_exists(app) -> N
         "/auth/sign-in", data={"email": "mine@example.com", "password": "wrong-wrong-wrong"}
     )
     assert missing.status_code == wrong.status_code
-    assert missing.get_data() == wrong.get_data()
+    # Compared with the CSRF token masked out, not byte for byte. The token is
+    # itsdangerous-serialised with a one-second-resolution timestamp, so two
+    # requests either side of a second boundary carry different ones -- an
+    # earlier version of this test compared raw bodies and failed roughly one
+    # run in three, for a reason that has nothing to do with enumeration.
+    assert _without_csrf(missing) == _without_csrf(wrong)
+    # And the guard is a real one: the shared message is actually present.
+    assert "do not match an account" in _without_csrf(missing)
 
 
 def test_an_api_key_is_never_echoed_back_after_issue(app) -> None:  # type: ignore[no-untyped-def]

@@ -154,7 +154,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest tests/test_performance.py -q --durations=12
+      # `-m performance` overrides the `-m 'not performance'` in pyproject's
+      # addopts, which keeps these out of the main run. This job is the only
+      # place they execute.
+      - run: pytest tests/test_performance.py -q -m performance --durations=12
 
   determinism:
     # Same input, same answer -- across runs and hash seeds. Without a

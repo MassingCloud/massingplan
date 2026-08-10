@@ -25,6 +25,7 @@ across two calendars is what an imported P6 schedule actually looks like.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import date
 
 import pytest
@@ -33,6 +34,12 @@ from massingplan.core.health import assess
 from massingplan.core.network import Link, RelationType, Task
 from massingplan.core.schedule import schedule_network
 from massingplan.core.timeaxis import STANDARD_5_DAY, WorkCalendar, WorkPattern
+
+#: Its own CI job, and excluded from the default run by `addopts` in
+#: pyproject.toml. A wall-clock ratio measured inside a full randomised suite on
+#: a loaded machine fails on nothing, and a flaky timing test teaches people to
+#: re-run red builds.
+pytestmark = pytest.mark.performance
 
 DATA_DATE = date(2026, 6, 1)
 
@@ -65,6 +72,22 @@ class Timer:
 
     def __exit__(self, *_exc: object) -> None:
         self.elapsed = time.perf_counter() - self._start
+
+
+def fastest(call: Callable[[], object], runs: int = 3) -> float:
+    """The quickest of `runs` attempts, in seconds.
+
+    The minimum rather than the mean, because the noise here is one-sided: a
+    scheduler hiccup, a GC pause or a neighbouring job can only make a sample
+    slower, never faster. The mean measures the machine's mood; the minimum
+    measures the code.
+    """
+    best = float("inf")
+    for _ in range(runs):
+        start = time.perf_counter()
+        call()
+        best = min(best, time.perf_counter() - start)
+    return best
 
 
 def _chain(count: int) -> tuple[list[Task], list[Link]]:
@@ -163,19 +186,17 @@ def test_scheduling_scales_about_linearly() -> None:
 
     small_tasks, small_links = _chain(200)
     big_tasks, big_links = _chain(2000)
-    with Timer() as small:
-        schedule_network(small_tasks, small_links, data_date=DATA_DATE)
-    with Timer() as big:
-        schedule_network(big_tasks, big_links, data_date=DATA_DATE)
+    small = fastest(lambda: schedule_network(small_tasks, small_links, data_date=DATA_DATE))
+    big = fastest(lambda: schedule_network(big_tasks, big_links, data_date=DATA_DATE))
 
     # Linear would be ~10x, quadratic ~100x. A ceiling of 30x leaves room for
     # constant overheads dominating the small case without letting a quadratic
     # through.
-    ratio = big.elapsed / max(small.elapsed, 1e-6)
+    ratio = big / max(small, 1e-6)
     assert ratio < 30, (
         f"10x the activities took {ratio:.0f}x the time "
-        f"({small.elapsed * 1000:.0f}ms then {big.elapsed * 1000:.0f}ms). That "
-        "is the signature of a quadratic pass, not a slow machine."
+        f"({small * 1000:.0f}ms then {big * 1000:.0f}ms). That is the signature "
+        "of a quadratic pass, not a slow machine."
     )
 
 
@@ -246,11 +267,9 @@ def test_the_monte_carlo_cost_is_proportional_to_iterations() -> None:
     from massingplan.core.risk import simulate
 
     tasks, links = _chain(200)
-    with Timer() as few:
-        simulate(tasks, links, data_date=DATA_DATE, iterations=100)
-    with Timer() as many:
-        simulate(tasks, links, data_date=DATA_DATE, iterations=400)
-    ratio = many.elapsed / max(few.elapsed, 1e-6)
+    few = fastest(lambda: simulate(tasks, links, data_date=DATA_DATE, iterations=100), runs=2)
+    many = fastest(lambda: simulate(tasks, links, data_date=DATA_DATE, iterations=400), runs=2)
+    ratio = many / max(few, 1e-6)
     assert ratio < 8, (
         f"4x the iterations took {ratio:.1f}x the time. Something per-run is "
         "being redone per iteration -- most likely a calendar lattice."
@@ -360,19 +379,17 @@ def test_the_project_list_does_not_reschedule_every_project(app) -> None:
 
     _upload(client, "P000")
     client.get("/projects")  # warm
-    with Timer() as one:
-        client.get("/projects")
+    one = fastest(lambda: client.get("/projects"), runs=5)
 
     for index in range(1, 20):
         _upload(client, f"P{index:03d}")
-    with Timer() as twenty:
-        response = client.get("/projects")
-    assert response.status_code == 200
+    assert client.get("/projects").status_code == 200
+    twenty = fastest(lambda: client.get("/projects"), runs=5)
 
-    ratio = twenty.elapsed / max(one.elapsed, 1e-4)
+    ratio = twenty / max(one, 1e-4)
     assert ratio < 4, (
         f"listing 20 projects took {ratio:.1f}x listing one "
-        f"({twenty.elapsed * 1000:.0f}ms vs {one.elapsed * 1000:.0f}ms). The page "
+        f"({twenty * 1000:.0f}ms vs {one * 1000:.0f}ms). The page "
         "reads six denormalised columns on `projects` and loads no children; "
         "something has started touching a relationship again -- check "
         "`repository.list_projects` still passes `noload` and "
@@ -393,14 +410,15 @@ def test_importing_a_1000_activity_file_is_not_a_per_row_query(app) -> None:
     )
 
     _upload(client, "SMALL", activities=100)
-    with Timer() as small:
-        _upload(client, "SMALLB", activities=100)
-    with Timer() as big:
-        _upload(client, "BIG", activities=1000)
+    # A fresh code each time -- an import is a write, so it cannot be repeated
+    # against the same project without hitting the unique constraint.
+    counter = iter(range(100))
+    small = fastest(lambda: _upload(client, f"S{next(counter):03d}", activities=100), runs=3)
+    big = fastest(lambda: _upload(client, f"B{next(counter):03d}", activities=1000), runs=2)
 
-    ratio = big.elapsed / max(small.elapsed, 1e-4)
+    ratio = big / max(small, 1e-4)
     assert ratio < 40, (
         f"10x the rows took {ratio:.0f}x the time "
-        f"({small.elapsed * 1000:.0f}ms then {big.elapsed * 1000:.0f}ms). Look "
-        "for a query inside the row loop."
+        f"({small * 1000:.0f}ms then {big * 1000:.0f}ms). Look for a query "
+        "inside the row loop."
     )

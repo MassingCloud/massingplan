@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -37,8 +38,34 @@ def _configure_sqlite(dbapi_connection: object, _record: object) -> None:
     cursor.close()
 
 
+def _ensure_sqlite_directory(url: str) -> None:
+    """Create the directory a SQLite file lives in, if it does not exist.
+
+    The default URL is `sqlite:///instance/massingplan.db` and `instance/` is
+    gitignored, so it is absent from every fresh clone and every container
+    image. SQLite will create the *file* and will not create the *directory*:
+    the result is `unable to open database file` on first boot, which reads as
+    a permissions problem and is not one.
+
+    Caught by the `offline` and `docker` CI jobs the first time they ran against
+    a clean checkout -- on any machine that had run the app before, the
+    directory already existed and the bug was invisible.
+    """
+    if not url.startswith("sqlite"):
+        return
+    path = url.split("///", 1)[-1].split("?", 1)[0]
+    # `sqlite://` with no path is the in-memory database, and `:memory:` is not
+    # a filename to make a directory for.
+    if not path or path == ":memory:":
+        return
+    parent = Path(path).expanduser().parent
+    if parent and not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+
+
 def init_engine(url: str, *, echo: bool = False) -> Engine:
     global _engine, _Session
+    _ensure_sqlite_directory(url)
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
     _engine = create_engine(url, echo=echo, future=True, connect_args=connect_args)
     if url.startswith("sqlite"):

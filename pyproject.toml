@@ -19,15 +19,16 @@ keywords = [
     "p6",
     "xer",
     "dcma",
+    "line of balance",
+    "location based scheduling",
     "monte carlo",
     "resource levelling",
     "flask",
 ]
-# `last planner` and `line of balance` were listed here and are **not built** --
-# both are SPEC.md P11+. Keywords are what PyPI shows and what people search on,
-# so advertising an unshipped capability is the same defect as a README
-# describing a directory that does not exist. `tests/test_scaffolding.py` now
-# fails if a deferred capability reappears here ahead of its implementation.
+# `last planner` is deliberately absent: it is not built. `line of balance`
+# was absent for the same reason until `core/locations.py` landed.
+# `tests/test_scaffolding.py` fails both ways -- if a keyword claims something
+# unbuilt, and if something gets built while the keyword stays missing.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Flask",

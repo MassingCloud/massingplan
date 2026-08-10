@@ -292,10 +292,12 @@ def test_assess_exits_non_zero_when_a_check_fails(tmp_path: Path) -> None:
 #: while no line of either existed.
 DEFERRED_CAPABILITIES = {
     "last planner": ("last.planner", "make.ready", "weekly work plan", "pull plan"),
-    "line of balance": ("line.of.balance", "line_of_balance"),
     "takt": ("takt",),
-    "location based": ("location.based", "class Location", "class Zone"),
 }
+# `line of balance` and `location based` were here until `core/locations.py`
+# landed. The parametrised test below is what noticed: it failed on the commit
+# that built them, naming the keyword list, so the advertisement was added
+# deliberately rather than the feature shipping unadvertised.
 
 
 def test_no_keyword_advertises_something_that_is_not_built() -> None:

@@ -336,7 +336,8 @@ Each phase meets its acceptance criteria, with tests, before the next begins.
 | **P8** | `resources` · `levelling` | Textbook one-crew case by hand; identical output under varied `PYTHONHASHSEED`; `WITHIN_FLOAT` never moves the finish |
 | **P9** | `compare` | Attribution sums exactly to the finish move |
 | **P10** | Vendor into massing | A real XER imports with logic intact and a non-flat critical path |
-| **P11+** | Location/takt engine; Last Planner production control | — |
+| **P11** | `locations` — location-based scheduling | Crew continuity holds; the line shift takes its maximum over every location; the emitted network schedules to the same dates through the ordinary engine |
+| **P12+** | Takt planning; Last Planner production control | — |
 
 ## 12. Vendoring into massing
 

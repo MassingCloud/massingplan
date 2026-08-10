@@ -107,6 +107,12 @@ def risk() -> Any:
     return jsonify(schedules.simulate_risk(_payload()))
 
 
+@bp.post("/linear")
+def linear() -> Any:
+    """Location-based scheduling: the flow, the interferences, and the network."""
+    return jsonify(schedules.schedule_linear(_payload()))
+
+
 @bp.post("/level")
 def level() -> Any:
     """Resource-level the network. Advisory by default -- core never writes."""
@@ -168,6 +174,7 @@ def capabilities() -> Any:
                 "monte_carlo_risk",
                 "resource_levelling",
                 "baseline_comparison_with_delay_attribution",
+                "location_based_scheduling",
             ],
         }
     )

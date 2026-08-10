@@ -280,6 +280,103 @@ def simulate_risk(payload: Mapping[str, Any]) -> dict[str, Any]:
     return result.to_dict()
 
 
+def schedule_linear(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Location-based (line-of-balance) scheduling.
+
+    Returns the flow *and* the network it emits, because the network is the
+    point: location-based scheduling here is a way of generating activities and
+    logic, not a second scheduler with its own answer. The caller can hand the
+    `activities` straight to `/schedule` and get identical dates.
+    """
+    from ..core.locations import (
+        LinearScheduleError,
+        LinearTask,
+        Location,
+        compute,
+        to_network,
+    )
+
+    raw_locations = payload.get("locations") or []
+    if not raw_locations:
+        raise ValidationFailed("a linear schedule needs a location breakdown")
+    raw_tasks = payload.get("tasks") or []
+    if not raw_tasks:
+        raise ValidationFailed("a linear schedule needs at least one task")
+
+    try:
+        locations = [
+            Location(
+                id=str(entry.get("id") or ""),
+                name=str(entry.get("name") or ""),
+                sequence=int(entry.get("sequence") or index),
+            )
+            for index, entry in enumerate(raw_locations)
+        ]
+        tasks = [
+            LinearTask(
+                id=str(entry.get("id") or ""),
+                name=str(entry.get("name") or ""),
+                duration_days=int(entry.get("duration_days") or 1),
+                quantities={str(k): float(v) for k, v in (entry.get("quantities") or {}).items()},
+                rate=None if entry.get("rate") in (None, "") else float(entry["rate"]),
+                buffer_days=int(entry.get("buffer_days") or 0),
+                crews=int(entry.get("crews") or 1),
+                calendar_id=str(entry.get("calendar_id") or "STD"),
+            )
+            for entry in raw_tasks
+        ]
+    except (TypeError, ValueError) as exc:
+        raise ValidationFailed(f"unusable linear schedule: {exc}") from exc
+
+    calendars = _calendars(payload.get("calendars"))
+    calendar = next(iter(calendars.values()))
+    start = _date(payload.get("start"), "start") or _date(payload.get("data_date"), "data_date")
+    if start is None:
+        raise ValidationFailed("a linear schedule needs a `start` date to flow from")
+
+    try:
+        result = compute(tasks, locations)
+        net_tasks, links, _cals = to_network(
+            result, tasks, locations, start=start, calendar=calendar
+        )
+    except LinearScheduleError as exc:
+        raise ValidationFailed(str(exc)) from exc
+
+    return {
+        "start": start.isoformat(),
+        "duration_working_days": result.duration_days,
+        "segments": result.to_rows(start=start, calendar=calendar),
+        "interferences": [i.to_dict() for i in result.interferences],
+        # Named rather than buried: this is what continuity cost, and it is the
+        # number that says whether location-based scheduling paid for itself.
+        "continuity_cost_days": result.continuity_cost_days,
+        "issues": result.issues.to_list(),
+        "activities": [
+            {
+                "id": task.id,
+                "name": task.name,
+                "duration_days": task.duration_days,
+                "calendar_id": task.calendar_id,
+                # The constraint is what holds each crew's line where the flow
+                # put it. Omitting it here served activities whose logic was
+                # right and whose *placement* silently reverted to earliest
+                # start -- which fragments every crew, the one thing this
+                # module exists to prevent. The round-trip test caught it.
+                "constraint": task.constraint.value,
+                "constraint_date": (
+                    task.constraint_date.isoformat() if task.constraint_date else None
+                ),
+                "predecessors": [
+                    {"id": link.predecessor, "type": link.type.value, "lag_days": link.lag_days}
+                    for link in links
+                    if link.successor == task.id
+                ],
+            }
+            for task in net_tasks
+        ],
+    }
+
+
 def level_resources(payload: Mapping[str, Any]) -> dict[str, Any]:
     calendars = _calendars(payload.get("calendars"))
     tasks, links = _tasks_and_links(payload.get("activities") or [], calendars)

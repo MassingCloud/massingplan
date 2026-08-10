@@ -71,6 +71,33 @@ def _cmd_check(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_webhooks_drain(args: argparse.Namespace) -> int:
+    """Attempt every webhook delivery that is due.
+
+    Run from cron or a sidecar, once a minute. Not a thread inside the web
+    process: with four gunicorn workers that is four threads racing for the same
+    rows, and the duplicate deliveries land at the subscriber rather than here.
+
+    Safe to run twice by accident -- the worst case is a subscriber seeing one
+    delivery id twice, which is why the id is in a header.
+    """
+    from . import database
+    from .app import create_app
+    from .services import webhooks
+
+    create_app()
+    with database.session_scope() as session:
+        counts = webhooks.drain(session, limit=args.limit)
+    print(
+        f"attempted {counts['attempted']}: {counts['delivered']} delivered, "
+        f"{counts['retrying']} retrying, {counts['failed']} failed"
+    )
+    # Non-zero only on a hard failure, not on a subscriber being down. A cron
+    # job that alerts every time somebody's endpoint blips is a cron job whose
+    # alerts get muted.
+    return 0
+
+
 def _cmd_gen_key(_args: argparse.Namespace) -> int:
     """Print a new field-encryption key.
 
@@ -374,6 +401,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "gen-key", help="print a MASSINGPLAN_ENCRYPTION_KEY for two-factor auth"
     ).set_defaults(func=_cmd_gen_key)
+
+    webhooks_cmd = sub.add_parser("webhooks", help="outbound webhook operations")
+    webhooks_sub = webhooks_cmd.add_subparsers(dest="webhooks_command", required=True)
+    drain = webhooks_sub.add_parser("drain", help="deliver every webhook event that is due")
+    drain.add_argument("--limit", type=int, default=100, help="deliveries per run")
+    drain.set_defaults(func=_cmd_webhooks_drain)
 
     return parser
 

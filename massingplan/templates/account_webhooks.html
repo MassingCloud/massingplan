@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Webhooks — massingplan{% endblock %}
+{% block content %}
+<h1>Webhooks</h1>
+<p class="lede">
+  Events are queued when they happen and delivered by
+  <code>massingplan webhooks drain</code>. Nothing is sent during your request,
+  so a slow subscriber cannot make your page slow.
+</p>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if issued_secret %}
+<div class="banner-once">
+  <p><strong>Copy this signing secret now. It is not shown again.</strong></p>
+  <p class="key">{{ issued_secret }}</p>
+  <p class="note">
+    Every request carries <code>X-Massing-Signature: t=&lt;unix&gt;,v1=&lt;hex&gt;</code>.
+    Verify HMAC-SHA256 over <code>"&lt;t&gt;." + body</code> with this secret, and
+    reject anything older than five minutes — the timestamp is inside the
+    signed material precisely so a captured body cannot be replayed forever.
+  </p>
+</div>
+{% endif %}
+
+<h2>Endpoints</h2>
+{% if hooks %}
+<table class="checks">
+  <thead><tr><th>URL</th><th>Events</th><th>State</th><th>Last delivered</th><th></th></tr></thead>
+  <tbody>
+    {% for h in hooks %}
+    <tr>
+      <td class="key">{{ h.url }}</td>
+      <td class="muted">{{ h.events | join(", ") }}</td>
+      <td>
+        {% if h.is_active %}<span class="tag">active</span>
+        {% else %}<span class="muted">off — {{ h.disabled_reason or "disabled" }}</span>{% endif %}
+      </td>
+      <td class="muted">
+        {{ h.last_success_at.strftime("%Y-%m-%d %H:%M") if h.last_success_at else "never" }}
+      </td>
+      <td>
+        <form method="post" action="{{ url_for('main.delete_webhook', webhook_id=h.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="linkish">remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="note">No endpoints yet.</p>
+{% endif %}
+
+<form method="post" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="hook-url">Endpoint URL (https)</label>
+  <input type="text" id="hook-url" name="url" placeholder="https://example.com/hooks/massingplan" required>
+  <label for="hook-name">Name (optional)</label>
+  <input type="text" id="hook-name" name="name" placeholder="Ops channel">
+  <label>Events</label>
+  {% for e in events %}
+  <label class="checkline"><input type="checkbox" name="events" value="{{ e }}"> {{ e }}</label>
+  {% endfor %}
+  <button type="submit">Add endpoint</button>
+</form>
+<p class="note">
+  The URL is resolved and checked before it is accepted, and again before every
+  delivery: loopback, private and link-local addresses are refused. That last
+  one is the cloud metadata service, which is the address this check exists for.
+  Redirects are not followed.
+</p>
+
+<h2>Recent deliveries</h2>
+{% if deliveries %}
+<table class="checks">
+  <thead><tr><th>When</th><th>Event</th><th>Status</th><th>Tries</th><th>Detail</th></tr></thead>
+  <tbody>
+    {% for d in deliveries %}
+    <tr>
+      <td class="muted">{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td><code>{{ d.event }}</code></td>
+      <td>{{ d.status.value }}{% if d.response_status %} ({{ d.response_status }}){% endif %}</td>
+      <td class="muted">{{ d.attempts }}</td>
+      <td class="muted">{{ d.error or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="note">Nothing queued yet.</p>
+{% endif %}
+
+<p class="note"><a href="{{ url_for('main.account') }}">Back to your account</a></p>
+{% endblock %}

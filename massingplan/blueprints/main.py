@@ -12,7 +12,8 @@ from flask import Blueprint, redirect, render_template, request, url_for
 
 from ..api import errors, schedules
 from ..models.identity import Permission
-from ..services import accounts, mfa, projects
+from ..models.webhooks import WebhookEvent
+from ..services import accounts, mfa, projects, webhooks
 from ..services import repository as repo
 from ..services.demo import demo_payload
 from . import deps
@@ -141,6 +142,21 @@ def set_baseline(project_id: str) -> Any:
                 summary=f"set baseline {name!r}",
                 detail={"baseline_id": baseline.id, "finish": str(baseline.project_finish)},
             )
+            # Queued in the same transaction as the baseline. An event that
+            # commits separately is an event about something that may not have
+            # happened.
+            webhooks.emit(
+                session,
+                organization_id=project.organization_id,
+                event=WebhookEvent.BASELINE_SET,
+                payload={
+                    "project_id": project.id,
+                    "project_code": project.code,
+                    "baseline_id": baseline.id,
+                    "baseline_name": name,
+                    "project_finish": str(baseline.project_finish),
+                },
+            )
     except projects.ProjectError as exc:
         return render_template(
             "error.html", error=type("E", (), {"message": str(exc), "detail": None})()
@@ -166,6 +182,15 @@ def delete_project(project_id: str) -> Any:
             # after the row is gone, an audit entry holding only an id is a
             # reference to nothing.
             summary=f"deleted project {project.code} ({project.name})",
+        )
+        # Emitted before the delete, and carrying the code and name. After the
+        # row is gone, a payload holding only an id is a reference to nothing --
+        # the subscriber cannot look it up, because that is the point.
+        webhooks.emit(
+            session,
+            organization_id=project.organization_id,
+            event=WebhookEvent.PROJECT_DELETED,
+            payload={"project_id": project.id, "project_code": project.code, "name": project.name},
         )
         session.delete(project)
     return redirect(url_for("main.projects_list"))
@@ -225,6 +250,21 @@ def upload() -> Any:
                 subject_id=project.id,
                 summary=f"imported {upload_file.filename} ({job.activity_count} activities)",
                 detail={"has_logic": job.has_logic, "format": job.source_format},
+            )
+            webhooks.emit(
+                session,
+                organization_id=project.organization_id,
+                event=WebhookEvent.IMPORT_COMPLETED,
+                payload={
+                    "project_id": project.id,
+                    "project_code": project.code,
+                    "filename": upload_file.filename,
+                    "activity_count": job.activity_count,
+                    # Carried because it is the one thing a subscriber must act
+                    # on: a schedule with no logic reads as entirely critical.
+                    "has_logic": job.has_logic,
+                    "format": job.source_format,
+                },
             )
             project_id = project.id
     except projects.ProjectError as exc:
@@ -313,6 +353,129 @@ def create_key() -> Any:
     # Shown once, in the URL of a redirect the user already has. Storing it to
     # show later would defeat hashing it at rest.
     return redirect(url_for("main.account", issued=plaintext))
+
+
+# -- webhooks --------------------------------------------------------------
+
+
+@bp.get("/account/webhooks")
+@deps.require_permission(Permission.WEBHOOK_MANAGE)
+def webhooks_page() -> Any:
+    from sqlalchemy import select
+
+    from ..models import Webhook, WebhookDelivery
+
+    session = deps.db()
+    org = deps.current_org()
+    hooks = session.scalars(
+        select(Webhook).where(Webhook.organization_id == org).order_by(Webhook.created_at.desc())
+    ).all()
+    recent = session.scalars(
+        select(WebhookDelivery)
+        .where(WebhookDelivery.organization_id == org)
+        .order_by(WebhookDelivery.created_at.desc())
+        .limit(25)
+    ).all()
+    return render_template(
+        "account_webhooks.html",
+        hooks=hooks,
+        deliveries=recent,
+        events=[e.value for e in WebhookEvent],
+        issued_secret=request.args.get("secret", ""),
+        error=None,
+    )
+
+
+@bp.post("/account/webhooks")
+@deps.require_permission(Permission.WEBHOOK_MANAGE)
+def create_webhook() -> Any:
+    principal = deps.current_principal()
+    url = request.form.get("url", "").strip()
+    chosen = request.form.getlist("events")
+    name = request.form.get("name", "").strip()
+
+    try:
+        with deps.committing() as session:
+            hook, secret = webhooks.subscribe(
+                session,
+                organization_id=principal.organization_id or "",
+                url=url,
+                events=chosen,
+                name=name,
+                created_by_id=principal.subject_id,
+                require_tls=_require_tls(),
+            )
+            accounts.audit(
+                session,
+                organization_id=principal.organization_id or "",
+                action="webhook.create",
+                actor_id=principal.subject_id,
+                actor_label=principal.label,
+                subject_type="webhook",
+                subject_id=hook.id,
+                # The URL, never the secret. An audit row carrying the
+                # credential whose issue it records is a second copy of it.
+                summary=f"subscribed {hook.url} to {', '.join(hook.events)}",
+            )
+    except webhooks.WebhookError as exc:
+        from sqlalchemy import select
+
+        from ..models import Webhook
+
+        hooks = (
+            deps.db()
+            .scalars(select(Webhook).where(Webhook.organization_id == principal.organization_id))
+            .all()
+        )
+        return render_template(
+            "account_webhooks.html",
+            hooks=hooks,
+            deliveries=[],
+            events=[e.value for e in WebhookEvent],
+            issued_secret="",
+            error=str(exc),
+        ), 400
+
+    # Shown once, like an API key. Storing it to show later would defeat
+    # encrypting it at rest.
+    return redirect(url_for("main.webhooks_page", secret=secret))
+
+
+@bp.post("/account/webhooks/<webhook_id>/delete")
+@deps.require_permission(Permission.WEBHOOK_MANAGE)
+def delete_webhook(webhook_id: str) -> Any:
+    from ..models import Webhook
+
+    principal = deps.current_principal()
+    with deps.committing() as session:
+        hook = session.get(Webhook, webhook_id)
+        if hook is None or hook.organization_id != principal.organization_id:
+            raise errors.NotFound("no such webhook")
+        accounts.audit(
+            session,
+            organization_id=principal.organization_id or "",
+            action="webhook.delete",
+            actor_id=principal.subject_id,
+            actor_label=principal.label,
+            subject_type="webhook",
+            subject_id=hook.id,
+            summary=f"removed the webhook to {hook.url}",
+        )
+        session.delete(hook)
+    return redirect(url_for("main.webhooks_page"))
+
+
+def _require_tls() -> bool:
+    """Plain http only where the operator is plainly developing.
+
+    An unencrypted webhook publishes every event, and its signature, to anyone
+    on the path -- so the exception is narrow and tied to the environment rather
+    than to a checkbox somebody can tick in production.
+    """
+    from flask import current_app
+
+    settings = current_app.extensions.get("massingplan_settings")
+    return getattr(settings, "env", "production") == "production"
 
 
 @bp.get("/account/mfa")

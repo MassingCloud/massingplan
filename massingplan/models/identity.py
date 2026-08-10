@@ -62,6 +62,11 @@ class Permission(str, Enum):
     IMPORT_RUN = "import:run"
     MEMBER_MANAGE = "member:manage"
     KEY_MANAGE = "key:manage"
+    #: Separate from KEY_MANAGE, because they give away different things. A key
+    #: lets its holder read this organisation's data; a webhook makes the server
+    #: issue outbound requests to an address of the subscriber's choosing, and
+    #: mails them every event thereafter. Owner and admin only.
+    WEBHOOK_MANAGE = "webhook:manage"
 
 
 #: Each role's permissions, spelled out. Deliberately repetitive: a reader can
@@ -77,6 +82,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.BASELINE_SET,
             Permission.IMPORT_RUN,
             Permission.MEMBER_MANAGE,
+            Permission.WEBHOOK_MANAGE,
         }
     ),
     Role.PLANNER: frozenset(

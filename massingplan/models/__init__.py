@@ -31,6 +31,7 @@ from .schedule import (
     Relationship,
     Resource,
 )
+from .webhooks import DeliveryStatus, Webhook, WebhookDelivery, WebhookEvent
 
 __all__ = [
     "ROLE_PERMISSIONS",
@@ -43,6 +44,7 @@ __all__ = [
     "BaselineActivity",
     "Calendar",
     "CalendarException",
+    "DeliveryStatus",
     "ImportJob",
     "Membership",
     "Organization",
@@ -53,6 +55,9 @@ __all__ = [
     "Role",
     "TimestampMixin",
     "User",
+    "Webhook",
+    "WebhookDelivery",
+    "WebhookEvent",
     "new_id",
     "utcnow",
 ]

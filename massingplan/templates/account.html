@@ -32,6 +32,14 @@
 </ul>
 {% endif %}
 
+{% if principal.can(Permission.WEBHOOK_MANAGE) %}
+<h2>Webhooks</h2>
+<p class="note">
+  <a href="{{ url_for('main.webhooks_page') }}">Manage endpoints</a> — signed,
+  queued, and delivered out of band.
+</p>
+{% endif %}
+
 <h2>Two-factor authentication</h2>
 {% if mfa_enabled %}
 <p class="note">

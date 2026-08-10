@@ -111,8 +111,16 @@ marketing document.
   buys nothing there. What it protects is the narrower and realer case of a
   leaked backup, where the key stays in the environment and does not travel with
   the dump — which is only true if you store the two apart.
-- **No signed webhooks in use.** The HMAC primitives exist in `security.py` and
-  nothing calls them yet.
+- **Webhooks carry a residual DNS-rebinding window.** Every URL is vetted
+  against its *resolved addresses* at subscribe time and again before each
+  delivery — loopback, private, link-local (the cloud metadata service),
+  carrier-grade NAT and reserved ranges are refused, on every address a name
+  returns rather than the first; the scheme is an allow-list; credentials in the
+  URL are refused; redirects are not followed; and the connection is pinned to
+  the address that was vetted rather than resolving a second time. What remains
+  is the gap between `getaddrinfo` and `connect` on that pinned address, which
+  pinning narrows but does not close. Egress filtering at the network is the
+  control that does close it.
 - **No penetration test.** Nobody outside the project has tried to break it.
 
 ## Out of scope

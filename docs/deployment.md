@@ -119,6 +119,43 @@ docker compose exec app alembic downgrade -1
 Every migration in this repo has been tested up, down and up again, on both
 SQLite and Postgres, by the `migrations` and `postgres` CI jobs.
 
+## Webhooks
+
+Events are queued when they happen and delivered out of band. **Nothing is sent
+unless you run the drain**, so this is not optional plumbing — without it,
+subscriptions accept events and silently accumulate them.
+
+```bash
+massingplan webhooks drain
+```
+
+Once a minute, from cron or a sidecar. Not a thread inside the web process: with
+four gunicorn workers that is four threads racing for the same rows, and the
+duplicate deliveries land at the subscriber rather than here.
+
+```
+* * * * * cd /app && massingplan webhooks drain >> /var/log/massingplan-hooks.log 2>&1
+```
+
+Five attempts over roughly two hours, then the delivery is marked failed and
+visible on the webhooks page. An endpoint that fails twenty deliveries in a row
+is switched off with a reason recorded; a 410 switches it off immediately,
+because that is what 410 means.
+
+**Put egress filtering in front of it.** The URL guard refuses loopback, private
+and link-local addresses on every address a name resolves to, re-checks before
+every delivery, and pins the connection to the address it vetted. That closes
+most of the server-side request forgery surface; a network egress rule closes
+the rest. `169.254.169.254` is your cloud provider's credential endpoint, and it
+is one careless subscribe away on any system that does not check.
+
+**Verifying a signature, subscriber side.** Every request carries
+`X-Massing-Signature: t=<unix>,v1=<hex>`. Compute HMAC-SHA256 over
+`"<t>." + raw_body` with the signing secret and compare in constant time, then
+reject anything older than five minutes. The timestamp is inside the signed
+material precisely so a captured body cannot be replayed forever — the signature
+stays valid because the body did not change, and only the age gives it away.
+
 ## Probes
 
 - **`/healthz`** — liveness. Deliberately does *not* touch the database. A

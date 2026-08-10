@@ -262,8 +262,12 @@ jobs:
           pip-audit --skip-editable
       - name: Software bill of materials
         run: |
-          pip install cyclonedx-bom
-          cyclonedx-py environment --output-format json --outfile sbom.json
+          # Pinned. `cyclonedx-bom` renamed `--outfile` to `--output-file`
+          # between majors, and an unpinned tool in a security job means the job
+          # breaks on someone else's release — which is a red build people learn
+          # to ignore, in the one place that must not happen.
+          pip install 'cyclonedx-bom>=7.0,<8.0'
+          cyclonedx-py environment --output-format json --output-file sbom.json
       - uses: actions/upload-artifact@v4
         with:
           name: sbom
@@ -288,7 +292,15 @@ jobs:
           # `/readyz` must be genuinely ready, not merely answering. A container
           # that reports itself healthy while nothing works is the failure this
           # step exists to catch.
-          curl -fsS http://localhost:8000/readyz | grep -q '"status": "ready"'
+          #
+          # Whitespace-tolerant: Flask serialises compactly outside debug, so the
+          # body is `{"status":"ready"}` with no space. Matching the pretty form
+          # made this step fail on a container that was working perfectly --
+          # and `tests/test_deployment.py` only checked that the pattern existed
+          # in this file, not that it matched anything.
+          readyz=$(curl -fsS http://localhost:8000/readyz)
+          echo "$readyz"
+          echo "$readyz" | grep -Eq '"status" *: *"ready"'
       - name: Refuse to boot without a secret key
         run: |
           if docker run --rm -e MASSINGPLAN_SECRET_KEY= massingplan:ci massingplan check; then

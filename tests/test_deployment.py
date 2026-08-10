@@ -180,5 +180,42 @@ def test_the_postgres_job_fails_if_its_tests_silently_skipped() -> None:
 
 
 def test_the_docker_job_checks_readiness_not_just_a_200() -> None:
-    assert '"status": "ready"' in CI_TEXT
+    assert "/readyz" in CI_TEXT
     assert "booted in production mode with no secret key" in CI_TEXT
+
+
+def test_the_readiness_grep_actually_matches_what_readyz_returns(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Assert the pattern *matches*, not that it exists in the file.
+
+    This test used to be `assert '"status": "ready"' in CI_TEXT` — which passed
+    for as long as the workflow contained that string, and said nothing about
+    whether it matched. It did not: Flask serialises compactly outside debug, so
+    the body is `{"status":"ready"}` with no space, and the docker job failed
+    against a container that was working perfectly.
+
+    A test that checks a grep pattern is spelled a certain way is a test of the
+    spelling. This one runs the pattern over the real response.
+    """
+    import re
+
+    from massingplan import database
+    from massingplan.app import create_app
+    from massingplan.config import Settings
+
+    application = create_app(
+        Settings(
+            env="testing",
+            secret_key="test-key",
+            database_url=f"sqlite:///{tmp_path / 'ready.db'}",
+        )
+    )
+    database.create_all()
+    body = application.test_client().get("/readyz").get_data(as_text=True)
+
+    # The same pattern the workflow greps with, as an ERE.
+    pattern = re.search(r"grep -Eq '([^']+)'", CI_TEXT)
+    assert pattern is not None, "the docker job no longer greps /readyz"
+    assert re.search(pattern.group(1), body), (
+        f"the workflow greps for {pattern.group(1)!r}, which does not match "
+        f"the actual /readyz body {body!r}"
+    )

@@ -143,6 +143,48 @@ def _options(payload: Mapping[str, Any] | None) -> SchedulerOptions:
         raise ValidationFailed(f"unusable scheduler options: {exc}") from exc
 
 
+def chart_rows(
+    outcome: Any,
+    links: Sequence[Any] = (),
+    labels: Mapping[str, tuple[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """`to_rows()` plus the two things a chart needs and persistence does not.
+
+    **`predecessors`.** The Gantt draws dependency arrows from this key, and it
+    was never in the payload -- `to_rows()` does not carry relationships,
+    because the persistence contract stores them in their own table. The
+    renderer read `(row.predecessors || [])`, got an empty array on every page,
+    and drew nothing. No error, no blank space, just a chart quietly missing the
+    feature its own docstring leads with. The `|| []` is what made it silent.
+
+    **`code` and `name`.** Rows carry the internal id, which is what persistence
+    needs and what nobody recognises. On a stored project that id is 32 hex
+    characters, so every bar was labelled with a UUID.
+
+    Both are added here rather than inside `to_rows()`, whose key set is frozen
+    by test on purpose. Three call sites were each doing half of this
+    separately; now there is one.
+    """
+    incoming: dict[str, list[str]] = {}
+    for link in links:
+        incoming.setdefault(str(link.successor), []).append(str(link.predecessor))
+
+    known = dict(labels or {})
+    rows = []
+    for row in outcome.to_rows():
+        activity_id = str(row["activity_id"])
+        code, name = known.get(activity_id, ("", ""))
+        rows.append(
+            {
+                **row,
+                "code": code or activity_id,
+                "name": name,
+                "predecessors": incoming.get(activity_id, []),
+            }
+        )
+    return rows
+
+
 def schedule_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Schedule a network described as JSON. The primary endpoint."""
     calendars = _calendars(payload.get("calendars"))
@@ -164,7 +206,7 @@ def schedule_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     return {
         **outcome.summary(),
-        "activities": outcome.to_rows(),
+        "activities": chart_rows(outcome, links),
         "violations": [v.to_dict() for v in outcome.violations],  # type: ignore[attr-defined]
         "issues": [i.to_dict() for i in outcome.issues],
     }
@@ -319,15 +361,8 @@ def import_file(content: str, *, filename: str = "") -> dict[str, Any]:
     from ..core.schedule import schedule as run
 
     outcome = run(schedule)
-    # Rows carry the internal id, which is what the persistence contract needs
-    # and what nobody recognises. The planner's own code (`A1010`) and the
-    # activity name are added here, at the presentation boundary, rather than
-    # inside `to_rows()` -- whose key set is frozen by test on purpose.
-    labels = {a.id: (a.code, a.name) for a in schedule.activities}
-    rows = []
-    for row in outcome.to_rows():
-        code, name = labels.get(str(row["activity_id"]), ("", ""))
-        rows.append({**row, "code": code or row["activity_id"], "name": name})
+    _tasks, links, _cals = schedule.to_network()
+    rows = chart_rows(outcome, links, {a.id: (a.code, a.name) for a in schedule.activities})
 
     return {
         "source": schedule.summary(),

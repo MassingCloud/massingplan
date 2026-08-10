@@ -1,8 +1,8 @@
 """The massing adoption kit's adapter, exercised here rather than only there.
 
-`massingplan/integrations/massing/test_adoption.py` imports `aec_api` and can
-only run inside the consumer. That left the adapter with **no test that runs in
-this repo at all** — and both bugs Massing Core found on adoption were adapter
+The kit's own gate (`test_mp_engine.py`) imports `aec_api` and can only run
+inside the consumer. Before this file existed that left the adapter with **no
+test that runs in this repo at all** — and both bugs Massing Core found on adoption were adapter
 bugs, not engine bugs. A kit nobody exercises upstream is a kit whose defects
 are found by the person adopting it.
 

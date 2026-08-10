@@ -102,17 +102,16 @@ def project_detail(project_id: str) -> Any:
 
 
 def _rows_with_codes(project: Any, outcome: Any) -> list[dict[str, Any]]:
-    """Rows labelled with the planner's code rather than the internal id.
+    """Rows labelled with the planner's code, and carrying their predecessors.
 
-    The id is correct and unrecognisable. Done at the presentation boundary, not
-    in `to_rows()`, whose key set is frozen by test on purpose.
+    Both come from `schedules.chart_rows`, which is the one place that decorates
+    a row for display. This function used to do half of it inline and omit the
+    relationships entirely, which is why the Gantt drew no dependency arrows.
     """
-    labels = {a.id: (a.code, a.name) for a in project.activities}
-    out = []
-    for row in outcome.to_rows():
-        code, name = labels.get(str(row["activity_id"]), ("", ""))
-        out.append({**row, "code": code or row["activity_id"], "name": name})
-    return out
+    _tasks, links, _cals, _options = repo.to_network(project)
+    return schedules.chart_rows(
+        outcome, links, {a.id: (a.code, a.name) for a in project.activities}
+    )
 
 
 @bp.post("/projects/<project_id>/baseline")
@@ -207,7 +206,16 @@ def upload() -> Any:
     if upload_file is None or not upload_file.filename:
         return render_template("upload.html", error="Choose a file first."), 400
 
-    raw = upload_file.read()
+    # Read it and close it. Werkzeug spools a multipart part to a temp file, and
+    # leaving the handle to the garbage collector means an unraisable
+    # ResourceWarning at an arbitrary later moment and a temp file held open for
+    # as long as the object lives. On a busy importer that is a file descriptor
+    # leak; here it was the thing that surfaced when warnings became errors.
+    filename = upload_file.filename
+    try:
+        raw = upload_file.read()
+    finally:
+        upload_file.close()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -224,7 +232,7 @@ def upload() -> Any:
     except (XERError, MSPDIError) as exc:
         return render_template("upload.html", error=f"Could not read that file: {exc}"), 415
 
-    name = schedule.project_name or upload_file.filename
+    name = schedule.project_name or filename
     try:
         with deps.committing() as session:
             project, _outcome, job = projects.import_schedule(
@@ -232,7 +240,7 @@ def upload() -> Any:
                 schedule,
                 organization_id=principal.organization_id or "",
                 name=name,
-                filename=upload_file.filename,
+                filename=filename,
             )
             accounts.audit(
                 session,
@@ -242,7 +250,7 @@ def upload() -> Any:
                 actor_label=principal.label,
                 subject_type="project",
                 subject_id=project.id,
-                summary=f"imported {upload_file.filename} ({job.activity_count} activities)",
+                summary=f"imported {filename} ({job.activity_count} activities)",
                 detail={"has_logic": job.has_logic, "format": job.source_format},
             )
             webhooks.emit(
@@ -252,7 +260,7 @@ def upload() -> Any:
                 payload={
                     "project_id": project.id,
                     "project_code": project.code,
-                    "filename": upload_file.filename,
+                    "filename": filename,
                     "activity_count": job.activity_count,
                     # Carried because it is the one thing a subscriber must act
                     # on: a schedule with no logic reads as entirely critical.

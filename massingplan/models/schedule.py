@@ -133,12 +133,11 @@ class Project(Base, TimestampMixin):
         passive_deletes=True,
     )
     # Relationships hang off *two* activities as well as the project, so on a
-    # project delete the database has already removed them via the activity
-    # cascade by the time the ORM issues its own DELETE, and SQLAlchemy warns
-    # that it matched nothing. `passive_deletes="all"` would silence that, but
-    # it cannot coexist with `delete-orphan` -- which is what makes
-    # `relationships_.clear()` work on re-import. Re-import is the common path;
-    # the warning is confined to an explicit project delete and is benign.
+    # project delete the database has already removed them through the activity
+    # cascade by the time the ORM issues its own DELETE. `passive_deletes="all"`
+    # cannot coexist with `delete-orphan` -- which is what makes
+    # `relationships_.clear()` work on re-import -- so the row-count check is
+    # switched off on the child mapper instead. See `Relationship`.
     relationships_: Mapped[list[Relationship]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
@@ -268,6 +267,22 @@ class Activity(Base, TimestampMixin):
 
 class Relationship(Base):
     __tablename__ = "relationships"
+    # The database also deletes these, and it gets there first.
+    #
+    # Both parents cascade to this table: `projects -> relationships` directly,
+    # and `projects -> activities -> relationships` via the activity FK. So when
+    # a project goes, SQLite/Postgres removes these rows through the activity
+    # path, and the unit of work then issues its own DELETE for the same rows --
+    # which matches nothing and warns "expected to delete N row(s); 0 were
+    # matched".
+    #
+    # Nothing is wrong with the deletion; the row-count check is. Turning it off
+    # is what SQLAlchemy's own warning recommends when the database shares
+    # responsibility for the cascade. The alternative -- dropping ON DELETE
+    # CASCADE so the ORM is the only deleter -- would make an orphan possible
+    # any time a row is removed outside a session.
+    __mapper_args__ = {"confirm_deleted_rows": False}
+
     __table_args__ = (
         UniqueConstraint(
             "project_id", "predecessor_id", "successor_id", "type", name="uq_relationship"
@@ -324,6 +339,22 @@ class Resource(Base):
 
 class Assignment(Base):
     __tablename__ = "assignments"
+    # The database also deletes these, and it gets there first.
+    #
+    # Both parents cascade to this table: `projects -> relationships` directly,
+    # and `projects -> activities -> relationships` via the activity FK. So when
+    # a project goes, SQLite/Postgres removes these rows through the activity
+    # path, and the unit of work then issues its own DELETE for the same rows --
+    # which matches nothing and warns "expected to delete N row(s); 0 were
+    # matched".
+    #
+    # Nothing is wrong with the deletion; the row-count check is. Turning it off
+    # is what SQLAlchemy's own warning recommends when the database shares
+    # responsibility for the cascade. The alternative -- dropping ON DELETE
+    # CASCADE so the ORM is the only deleter -- would make an orphan possible
+    # any time a row is removed outside a session.
+    __mapper_args__ = {"confirm_deleted_rows": False}
+
     __table_args__ = (UniqueConstraint("activity_id", "resource_id", name="uq_assignment"),)
 
     id: Mapped[str] = pk_column()

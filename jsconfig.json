@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Type-checking for the one JavaScript file this project ships, with no",
+    "build step and no bundle. `tsc --noEmit` reads this, checks `gantt.js`",
+    "against the JSDoc types in it, and emits nothing -- the file served to the",
+    "browser is the file in the repo, which is what keeps `default-src 'self'`",
+    "honest and the deployment a copy rather than a build.",
+    "",
+    "TypeScript is a dev-only checker here, not a language this project is",
+    "written in. There is no `frontend/` bundle: AGENTS.md claimed one for a",
+    "while and it did not exist, which is how a Gantt shipped for weeks drawing",
+    "no dependency arrows with nothing to catch it."
+  ],
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["ES2017", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["massingplan/static/js/**/*.js"]
+}

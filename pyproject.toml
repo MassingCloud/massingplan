@@ -108,6 +108,21 @@ markers = [
     "adapter: tests that exercise an optional adapter (SPEC.md 3.2)",
     "performance: complexity budgets (own CI job; excluded from the default run)",
 ]
+# A warning is a defect that has not been triaged yet, and a suite that prints
+# four of them every run is a suite where the fifth is invisible. The SAWarning
+# about a DELETE matching no rows sat in the output for weeks behind a
+# `filterwarnings` marker, and it was a real mapper misconfiguration.
+#
+# `error` for our own code and for SQLAlchemy. Third-party deprecations are
+# ignored by name rather than by turning the whole thing off, so each one is a
+# decision with a reason next to it rather than a blanket.
+filterwarnings = [
+    "error",
+    "error::sqlalchemy.exc.SAWarning",
+    # `datetime.utcnow()` inside SQLAlchemy's own event system on 3.12+. Not
+    # ours to fix and not reachable from our code paths.
+    "ignore:datetime.datetime.utcnow:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["massingplan"]

@@ -105,11 +105,30 @@ infrastructure.
   result.
 
 ## One deliberate deviation
-massingbill's house rule is zero JavaScript. A schedule tool needs a Gantt you
-can drag a bar in, so `frontend/` builds a self-hosted bundle into
-`massingplan/static/`. **No CDN, no external font, no third-party chart
-library** — the strict `default-src 'self'` CSP in `security.py` stays intact,
-and a test asserts no `<script src="http...">` appears in any template.
+massingbill's house rule is zero JavaScript. A schedule tool needs a Gantt, so
+`massingplan/static/js/gantt.js` exists. **No CDN, no external font, no
+third-party chart library** — the strict `default-src 'self'` CSP in
+`security.py` stays intact, and a test asserts no `<script src="http...">`
+appears in any template.
+
+**There is no build step and no `frontend/` bundle.** This document claimed one
+for a while; it did not exist, and neither did anything that checked the
+JavaScript. The Gantt shipped for weeks drawing no dependency arrows at all,
+because `to_rows()` never carried `predecessors` and the renderer read
+`(row.predecessors || [])` — an absent contract became an empty list and the
+feature was silently missing.
+
+So: the file served to the browser is the file in the repo, and it is
+type-checked in place.
+
+```bash
+npx tsc -p jsconfig.json      # `checkJs`, `noEmit`, strict
+```
+
+TypeScript is a dev-only checker, not a language this project is written in. The
+`Row` typedef at the top of `gantt.js` is the renderer's half of the contract in
+`api.schedules.chart_rows()`, and `tests/test_frontend.py` asserts the two
+agree — because the half nobody wrote down is the half that went missing.
 
 ## Workflow
 Work phase by phase per `SPEC.md` §11. Meet a phase's acceptance criteria, with

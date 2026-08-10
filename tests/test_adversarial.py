@@ -564,14 +564,49 @@ def test_a_path_traversal_filename_does_not_escape(app) -> None:  # type: ignore
 
 
 def test_an_upload_over_the_limit_is_refused_not_buffered(app) -> None:  # type: ignore[no-untyped-def]
-    limit = app.config["MAX_CONTENT_LENGTH"]
-    client = _client(app)
+    """Refused on the declared length, before the body is read.
+
+    The first version of this test sent a real 16MB body to prove the point,
+    which is the one thing the name says must not happen -- and it buffered that
+    body through Werkzeug's test client, which spools to a temp file and does
+    not close it. Warnings-as-errors turned that into an unraisable
+    `ResourceWarning` attributed to whichever unrelated test happened to be
+    running when the garbage collector got to it.
+
+    Declaring an oversized `Content-Length` with a small body asserts the
+    stronger property: the request is rejected from the header, so a hostile
+    client cannot make the server allocate gigabytes just by claiming to.
+    """
+    small = create_app(
+        Settings(
+            env="testing",
+            secret_key="test-key",
+            database_url="sqlite:///:memory:",
+            max_upload_bytes=1024,
+            rate_limit_enabled=False,
+        )
+    )
+    small.config["TESTING"] = True
+    small.config["WTF_CSRF_ENABLED"] = False
+    database.create_all()
+    with database.session_scope() as session:
+        repo.ensure_default_organization(session)
+        accounts.register(
+            session,
+            email="small@example.com",
+            password=PASSWORD,
+            organization_id=repo.DEFAULT_ORG_ID,
+        )
+
+    client = small.test_client()
+    client.post("/auth/sign-in", data={"email": "small@example.com", "password": PASSWORD})
     response = client.post(
         "/upload",
-        data={"file": (io.BytesIO(b"x" * (limit + 1024)), "huge.xer")},
+        data={"file": (io.BytesIO(b"x" * 4096), "huge.xer")},
         content_type="multipart/form-data",
     )
     assert response.status_code == 413
+    assert small.config["MAX_CONTENT_LENGTH"] == 1024
 
 
 # -- authorisation, not just authentication --------------------------------

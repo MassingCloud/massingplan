@@ -20,6 +20,36 @@
 (function () {
   "use strict";
 
+  /**
+   * One scheduled activity, as `api.schedules.chart_rows()` sends it.
+   *
+   * This typedef is the renderer's half of that contract, and it is written
+   * down because the half that was not written down went missing: `to_rows()`
+   * never carried `predecessors`, the arrow loop read
+   * `(row.predecessors || [])`, and the chart drew no dependency arrows at all
+   * for weeks. Nothing failed, because `|| []` turns an absent contract into an
+   * empty one. `tsc --checkJs` now reads this and the fields are required.
+   *
+   * @typedef {object} Row
+   * @property {string} activity_id   Internal id. 32 hex characters when stored.
+   * @property {string} code          The planner's own code -- what to display.
+   * @property {string} name          Activity name, for the tooltip.
+   * @property {string} start         ISO date, inclusive.
+   * @property {string} finish        ISO date, inclusive.
+   * @property {number} duration_days Zero for a milestone.
+   * @property {number|null} total_float_days  Null when complete: no float, not zero float.
+   * @property {boolean} is_critical
+   * @property {boolean} is_longest_path
+   * @property {boolean} constraint_satisfied
+   * @property {string} status
+   * @property {string[]} predecessors  Activity ids. The arrows are drawn from this.
+   */
+
+  /**
+   * Where a bar ended up, so the arrows can find it.
+   * @typedef {{x: number, w: number, y: number, mid: number, critical: boolean}} Geometry
+   */
+
   var ROW_H = 26;
   var BAR_H = 14;
   var LEFT = 220;
@@ -27,29 +57,52 @@
   var MIN_DAY_W = 2;
   var MAX_DAY_W = 40;
 
+  /**
+   * ISO date to a UTC epoch millisecond, or NaN if it is not one.
+   * @param {string|undefined} iso
+   * @returns {number}
+   */
   function parseDate(iso) {
     var parts = String(iso).split("-");
+    if (parts.length !== 3) return NaN;
     return Date.UTC(+parts[0], +parts[1] - 1, +parts[2]);
   }
 
+  /**
+   * @param {string} iso
+   * @param {number} origin
+   * @returns {number}
+   */
   function dayIndex(iso, origin) {
     return Math.round((parseDate(iso) - origin) / 86400000);
   }
 
+  /**
+   * @param {string} tag
+   * @param {Record<string, string|number>} [attrs]
+   * @param {string} [text]
+   * @returns {SVGElement}
+   */
   function el(tag, attrs, text) {
     var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (var key in attrs) {
       if (Object.prototype.hasOwnProperty.call(attrs, key)) {
-        node.setAttribute(key, attrs[key]);
+        node.setAttribute(key, String(attrs[key]));
       }
     }
     if (text !== undefined) node.textContent = text;
     return node;
   }
 
+  /**
+   * @param {number} origin
+   * @param {number} totalDays
+   * @returns {{offset: number, label: string}[]}
+   */
   function monthTicks(origin, totalDays) {
     // Month boundaries rather than an even split: a reader locates "March"
     // instantly and "day 47" never.
+    /** @type {{offset: number, label: string}[]} */
     var ticks = [];
     var cursor = new Date(origin);
     cursor.setUTCDate(1);
@@ -67,7 +120,12 @@
     return ticks;
   }
 
+  /**
+   * @param {HTMLElement} host
+   * @returns {void}
+   */
   function render(host) {
+    /** @type {Row[]} */
     var rows;
     try {
       rows = JSON.parse(host.dataset.activities || "[]");
@@ -80,8 +138,15 @@
       return;
     }
 
+    // A missing or unparseable bound makes every coordinate NaN, and an SVG
+    // full of NaN renders as a blank box with no error anywhere. Say so.
     var origin = parseDate(host.dataset.start);
-    var totalDays = Math.max(1, dayIndex(host.dataset.finish, origin) + 1);
+    var last = parseDate(host.dataset.finish);
+    if (isNaN(origin) || isNaN(last)) {
+      host.textContent = "The schedule has no start or finish date to draw against.";
+      return;
+    }
+    var totalDays = Math.max(1, Math.round((last - origin) / 86400000) + 1);
     var available = Math.max(320, host.clientWidth - LEFT - PAD * 2);
     var dayW = Math.min(MAX_DAY_W, Math.max(MIN_DAY_W, available / totalDays));
 
@@ -119,10 +184,14 @@
     svg.appendChild(axis);
 
     // -- bars --------------------------------------------------------------
-    var geometry = {};
+    // `create(null)`, not `{}`: activity ids come from uploaded files, and a
+    // row coded "constructor" or "__proto__" would otherwise resolve against
+    // Object's prototype and route an arrow to a garbage coordinate.
+    /** @type {Record<string, Geometry>} */
+    var geometry = Object.create(null);
     var bars = el("g", { class: "bars" });
 
-    rows.forEach(function (row, i) {
+    rows.forEach(function (/** @type {Row} */ row, /** @type {number} */ i) {
       var y = 40 + i * ROW_H;
       var s = dayIndex(row.start, origin);
       var f = dayIndex(row.finish, origin);
@@ -130,9 +199,11 @@
       var w = Math.max(dayW * 0.6, (f - s + 1) * dayW);
       var milestone = row.duration_days === 0;
 
-      var label = el("text", { x: PAD, y: y + BAR_H - 2, class: "row-label" },
-        row.activity_id);
-      label.appendChild(el("title", {}, row.activity_id));
+      // The planner's own code, not the internal id -- on a stored project
+      // that id is 32 hex characters and means nothing to the reader.
+      var name = row.code || row.activity_id;
+      var label = el("text", { x: PAD, y: y + BAR_H - 2, class: "row-label" }, name);
+      label.appendChild(el("title", {}, row.name ? name + " -- " + row.name : name));
       bars.appendChild(label);
       bars.appendChild(el("line", {
         x1: LEFT, y1: y + BAR_H + 6, x2: width - PAD, y2: y + BAR_H + 6, class: "rowline"
@@ -165,7 +236,7 @@
       } else {
         shape = el("rect", { x: x, y: y, width: w, height: BAR_H, rx: 2, class: cls });
       }
-      var tip = row.activity_id + "  " + row.start + " to " + row.finish +
+      var tip = name + "  " + row.start + " to " + row.finish +
         "  (" + row.duration_days + "d)" +
         (row.total_float_days === null
           ? "  float: n/a, complete"
@@ -180,8 +251,11 @@
     // Routed as an elbow rather than a straight line: on a real schedule a
     // straight line crosses six unrelated bars and tells the reader nothing.
     var links = el("g", { class: "links" });
-    rows.forEach(function (row) {
-      (row.predecessors || []).forEach(function (predId) {
+    rows.forEach(function (/** @type {Row} */ row) {
+      // Not `row.predecessors || []`. That is what hid the missing contract:
+      // an absent key became an empty list and the chart drew nothing, with no
+      // error anywhere. If the server stops sending them, this throws.
+      row.predecessors.forEach(function (/** @type {string} */ predId) {
         var from = geometry[predId];
         var to = geometry[row.activity_id];
         if (!from || !to) return;
@@ -212,7 +286,7 @@
   function boot() {
     var hosts = document.querySelectorAll(".gantt-host");
     for (var i = 0; i < hosts.length; i++) {
-      render(hosts[i]);
+      render(/** @type {HTMLElement} */ (hosts[i]));
     }
   }
 
@@ -222,9 +296,10 @@
     boot();
   }
 
-  var resizeTimer = null;
+  /** @type {number|undefined} */
+  var resizeTimer;
   window.addEventListener("resize", function () {
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(boot, 150);
+    if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(boot, 150);
   });
 })();

@@ -119,6 +119,25 @@ jobs:
             --cov=massingplan.core.timeaxis --cov-branch \
             --cov-report=term-missing --cov-fail-under=100
 
+  frontend:
+    # The one JavaScript file, type-checked in place against its own JSDoc.
+    #
+    # Nothing checked it before, and the cost was not cosmetic: the Gantt drew
+    # no dependency arrows on any page, because `to_rows()` never carried
+    # `predecessors` and the renderer read `(row.predecessors || [])`. An absent
+    # contract became an empty list and the feature was silently missing.
+    #
+    # `--noEmit`: this is a checker, not a build. The file served to the browser
+    # is the file in the repo, which is what keeps `default-src 'self'` honest
+    # and the deployment a copy rather than a pipeline.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npx --yes --package typescript@5 -- tsc -p jsconfig.json
+
   adversarial:
     # The app attacked on purpose: cross-tenant reads, session fixation, open
     # redirect, stored XSS, header injection, mass assignment, XXE. Not a

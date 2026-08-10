@@ -175,12 +175,6 @@ def test_reimporting_replaces_rather_than_merges(session: Session) -> None:
     assert session.query(Activity).filter_by(project_id=project.id).count() == 2
 
 
-@pytest.mark.filterwarnings(
-    # The database cascade removes the relationship rows before the ORM's own
-    # DELETE reaches them, so SQLAlchemy reports matching zero. Expected here
-    # and only here; see the comment on `Project.relationships_`.
-    "ignore:DELETE statement on table 'relationships':sqlalchemy.exc.SAWarning"
-)
 def test_deleting_a_project_takes_its_rows_with_it(session: Session) -> None:
     """SQLite has foreign keys off by default; without the pragma every cascade
     in the schema is decoration and this leaves orphans.

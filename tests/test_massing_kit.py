@@ -1,10 +1,10 @@
 """Prove the adoption kit is drop-in, by assembling a consumer and running it.
 
-The kit shipped twice with defects the consumer found, and both times the reason
-was the same: **nothing here ever ran it in the consumer's shape.** The kit's own
-`test_adoption.py` imports `aec_api`, so it cannot run in this repo, and
-`test_mp_engine.py` is written for a host with no pytest. Between them they
-covered everything except the question that matters — does this drop in?
+The kit shipped with defects the consumer found, and each time the reason was
+the same: **nothing here ever ran it in the consumer's shape.** The gate imports
+`aec_api`, so it cannot run under this repo's pytest, and it is written for a
+host that has no pytest at all. Between those two facts it covered everything
+except the question that matters — does this drop in?
 
 So this builds a miniature of massing's layout in a temp directory:
 

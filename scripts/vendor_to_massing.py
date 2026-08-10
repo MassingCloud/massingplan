@@ -69,7 +69,8 @@ ADAPTER_FILES = {
     "test_mp_engine.py": "test_mp_engine.py",
 }
 
-#: Upstream's own pytest modules are **not** copied.
+#: Upstream's own pytest modules are **not** copied, and there is no list of
+#: them here to go stale.
 #:
 #: The consumer deliberately has no pytest -- `run_tests.py` shells out to
 #: `python test_x.py` and each file asserts in a `__main__` block. Copying a
@@ -79,25 +80,8 @@ ADAPTER_FILES = {
 #:
 #: Adding pytest to that repo to make a vendored kit run would be the tail
 #: wagging the dog. So the consumer gets `test_mp_engine.py`, a stdlib-only
-#: conformance gate sized to what its callers actually depend on, and the full
-#: suite stays here where it runs on every push.
-VENDORED_TESTS: list[str] = []
-
-#: Kept for reference: what the full suite covers upstream, and would have been
-#: copied under the old scheme.
-UPSTREAM_SUITE = [
-    "test_timeaxis_kernel.py",
-    "test_units.py",
-    "test_graph.py",
-    "test_constraints.py",
-    "test_cpm.py",
-    "test_schedule.py",
-    "test_health_progress_risk.py",
-    "test_xer.py",
-    "test_mspdi.py",
-    "test_levelling.py",
-    "test_compare.py",
-]
+#: conformance gate sized to what its callers actually depend on (see
+#: ADAPTER_FILES), and the full suite stays here where it runs on every push.
 
 
 def upstream_sha() -> str:

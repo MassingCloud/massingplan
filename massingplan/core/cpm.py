@@ -87,6 +87,11 @@ class NetworkResult:
     free_float_days: Mapping[str, int | None]
     project_start: Instant
     project_finish: Instant
+    #: The instant the schedule was computed *from*. Carried because DCMA checks
+    #: 9, 11 and 14 all compare against it, and deriving it downstream as "the
+    #: earliest early start" is wrong the moment anything carries an actual --
+    #: which is exactly when those three checks become runnable.
+    data_date: Instant
     driving_predecessor: Mapping[str, str | None]
     terminal_activity: str | None
     violations: tuple[ConstraintViolation, ...]
@@ -581,6 +586,7 @@ def calculate(
         free_float_days=free_float,
         project_start=project_start,
         project_finish=project_finish,
+        data_date=dd,
         driving_predecessor=driving,
         terminal_activity=terminal,
         violations=tuple(violations),

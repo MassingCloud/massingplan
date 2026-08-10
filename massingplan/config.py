@@ -17,10 +17,11 @@ from dataclasses import dataclass, field
 class Settings:
     env: str = field(default_factory=lambda: os.getenv("MASSINGPLAN_ENV", "development"))
     secret_key: str = field(default_factory=lambda: os.getenv("MASSINGPLAN_SECRET_KEY", ""))
-    # No `database_url` yet, deliberately. Nothing persists, so a setting that
-    # reads a URL and connects to nothing would report a working database in
-    # `massingplan check` while every request stayed stateless. It arrives with
-    # the models phase.
+    database_url: str = field(
+        default_factory=lambda: os.getenv(
+            "MASSINGPLAN_DATABASE_URL", "sqlite:///instance/massingplan.db"
+        )
+    )
     max_upload_bytes: int = field(
         default_factory=lambda: int(os.getenv("MASSINGPLAN_MAX_UPLOAD_BYTES", 16 * 1024 * 1024))
     )

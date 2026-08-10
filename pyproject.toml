@@ -38,14 +38,13 @@ classifiers = [
 # pure stdlib so it can be vendored into another product's source tree and
 # imported there with no packaging change at all (SPEC.md 12).
 #
-# Exactly what is imported, and nothing else. The persistence stack
-# (SQLAlchemy, Alembic, Flask-Login, argon2) is not here because nothing imports
-# it yet -- declaring it now would make `pip install` pull a dozen packages the
-# app never touches, and would hide the fact that the app is currently
-# stateless. It returns with the models phase, as a dependency and as a fact.
+# Exactly what is imported, and nothing else. Auth (Flask-Login, argon2) is
+# still absent because nothing imports it yet.
 dependencies = [
     "Flask>=3.0,<4.0",
     "Flask-WTF>=1.2,<2.0",
+    "SQLAlchemy>=2.0,<3.0",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -195,6 +194,7 @@ type = "forbidden"
 source_modules = ["massingplan.core"]
 forbidden_modules = [
     "massingplan.api",
+    "massingplan.models",
     "massingplan.services",
     "massingplan.blueprints",
     "massingplan.integrations",
@@ -257,8 +257,6 @@ layers = [
     "massingplan.integrations",
     "massingplan.api",
     "massingplan.services",
+    "massingplan.models",
     "massingplan.core",
 ]
-# No `models` layer: nothing persists yet, and an empty package listed here to
-# make the contract look complete is the opposite of what these contracts are
-# for. It goes back between `services` and `core` when the ORM lands.

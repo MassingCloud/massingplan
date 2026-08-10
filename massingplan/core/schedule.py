@@ -263,9 +263,7 @@ def _outcome(
         duration = project_cal.count_working_days(result.project_start, result.project_finish)
 
     return ScheduleOutcome(
-        data_date=day_of(
-            min(result.early_start.values()) if result.early_start else result.project_start
-        ),
+        data_date=day_of(result.data_date),
         project_start=day_of(result.project_start),
         project_finish=day_of(result.project_finish - 1)
         if result.project_finish > result.project_start

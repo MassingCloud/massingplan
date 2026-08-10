@@ -21,3 +21,8 @@ frontend/dist/
 *.db
 *.sqlite3
 .DS_Store
+
+# Alembic writes here during a local upgrade; the schema lives in migrations/.
+instance/*.db
+instance/*.db-wal
+instance/*.db-shm

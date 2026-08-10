@@ -16,8 +16,41 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from ..api import errors, schedules
+from ..models.identity import Permission
+from . import deps
 
 bp = Blueprint("schedule_api", __name__)
+
+
+@bp.before_request
+def require_a_credential() -> Any:
+    """Every endpoint here needs a key, except the capability listing.
+
+    A guard on the blueprint rather than a decorator per view: a decorator that
+    has to be remembered is a decorator that will be forgotten on the next
+    endpoint somebody adds, and the forgetting is silent.
+    """
+    from flask import jsonify
+
+    if request.endpoint and request.endpoint.endswith("capabilities"):
+        return None
+    principal = deps.current_principal()
+    if not principal.is_authenticated:
+        return jsonify(
+            {
+                "error": {
+                    "code": "unauthenticated",
+                    "message": (
+                        "present an API key as `Authorization: Bearer mpln_...` or in `X-Api-Key`"
+                    ),
+                }
+            }
+        ), 401
+    if not principal.can(Permission.PROJECT_READ):
+        return jsonify(
+            {"error": {"code": "forbidden", "message": "this key cannot read projects"}}
+        ), 403
+    return None
 
 
 def _payload() -> dict[str, Any]:

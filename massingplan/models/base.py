@@ -22,8 +22,47 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, Integer, String
+from sqlalchemy import Date, Integer, String, TypeDecorator
+from sqlalchemy import DateTime as SaDateTime
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class UtcDateTime(TypeDecorator[datetime]):
+    """A timestamp that is always timezone-aware UTC on the way out.
+
+    SQLite has no timestamp type and hands back a *naive* datetime whatever
+    `DateTime(timezone=True)` claims. Every comparison against
+    `datetime.now(tz=utc)` then raises `TypeError: can't compare offset-naive
+    and offset-aware datetimes` -- and it raises only after a round trip through
+    the database, so it passes every test that keeps the object in memory.
+
+    Found by the account-lockout check, where the consequence is a 500 on the
+    sign-in page for exactly the users who most need to get in.
+    """
+
+    impl = SaDateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, _dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        # Naive in means "the caller meant UTC". Storing it unmarked is how the
+        # ambiguity gets baked in.
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: datetime | None, _dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+#: Used everywhere a timestamp is stored. Aliased so a model reads naturally.
+DateTime = UtcDateTime
 
 
 class Base(DeclarativeBase):

@@ -45,7 +45,7 @@ from .base import Base, TimestampMixin, date_column, days_column, org_column, pk
 #: constraint. Native PostgreSQL enums need a migration to add a member, and the
 #: engine's enums gain members -- an eleventh constraint type should be a code
 #: change, not a database outage.
-def _enum(enum_class: type, name: str) -> Enum:
+def enum_column(enum_class: type, name: str) -> Enum:
     return Enum(
         enum_class,
         native_enum=False,
@@ -84,10 +84,12 @@ class Project(Base, TimestampMixin):
     must_finish_by: Mapped[date | None] = date_column()
     default_calendar_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     progress_mode: Mapped[ProgressMode] = mapped_column(
-        _enum(ProgressMode, "progress_mode"), default=ProgressMode.RETAINED_LOGIC, nullable=False
+        enum_column(ProgressMode, "progress_mode"),
+        default=ProgressMode.RETAINED_LOGIC,
+        nullable=False,
     )
     lag_calendar: Mapped[LagCalendar] = mapped_column(
-        _enum(LagCalendar, "lag_calendar"), default=LagCalendar.PREDECESSOR, nullable=False
+        enum_column(LagCalendar, "lag_calendar"), default=LagCalendar.PREDECESSOR, nullable=False
     )
     source_format: Mapped[str] = mapped_column(String(16), default="", nullable=False)
 
@@ -201,7 +203,7 @@ class Activity(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(400), default="", nullable=False)
     kind: Mapped[ActivityKind] = mapped_column(
-        _enum(ActivityKind, "activity_kind"), default=ActivityKind.TASK, nullable=False
+        enum_column(ActivityKind, "activity_kind"), default=ActivityKind.TASK, nullable=False
     )
     calendar_key: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     duration_days: Mapped[int] = days_column()
@@ -210,7 +212,7 @@ class Activity(Base, TimestampMixin):
     percent_complete: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     constraint: Mapped[ConstraintType] = mapped_column(
-        _enum(ConstraintType, "constraint_type"), default=ConstraintType.NONE, nullable=False
+        enum_column(ConstraintType, "constraint_type"), default=ConstraintType.NONE, nullable=False
     )
     constraint_date: Mapped[date | None] = date_column()
     actual_start: Mapped[date | None] = date_column()
@@ -264,7 +266,7 @@ class Relationship(Base):
         ForeignKey("activities.id", ondelete="CASCADE"), nullable=False
     )
     type: Mapped[RelationType] = mapped_column(
-        _enum(RelationType, "relation_type"), default=RelationType.FS, nullable=False
+        enum_column(RelationType, "relation_type"), default=RelationType.FS, nullable=False
     )
     #: Signed. Negative is a lead, which is legal and which DCMA check 2 counts.
     lag_days: Mapped[int] = days_column()

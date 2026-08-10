@@ -13,5 +13,10 @@
   {% endif %}
 </div>
 {% endif %}
+{% if request_id %}
+{# The id, not the traceback. A stack trace tells an attacker the framework, the
+   file layout and often a query; the id finds the log line that has all of it. #}
+<p class="note">Reference <code>{{ request_id }}</code> — quote this if you report it.</p>
+{% endif %}
 <p><a href="{{ url_for('main.index') }}">Back to the start</a></p>
 {% endblock %}

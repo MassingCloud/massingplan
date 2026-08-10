@@ -9,6 +9,15 @@ tested.
 """
 
 from .base import Base, TimestampMixin, new_id, utcnow
+from .identity import (
+    ROLE_PERMISSIONS,
+    ApiKey,
+    AuditEvent,
+    Membership,
+    Permission,
+    Role,
+    User,
+)
 from .schedule import (
     Activity,
     Assignment,
@@ -24,19 +33,26 @@ from .schedule import (
 )
 
 __all__ = [
+    "ROLE_PERMISSIONS",
     "Activity",
+    "ApiKey",
     "Assignment",
+    "AuditEvent",
     "Base",
     "Baseline",
     "BaselineActivity",
     "Calendar",
     "CalendarException",
     "ImportJob",
+    "Membership",
     "Organization",
+    "Permission",
     "Project",
     "Relationship",
     "Resource",
+    "Role",
     "TimestampMixin",
+    "User",
     "new_id",
     "utcnow",
 ]

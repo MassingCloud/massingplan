@@ -45,6 +45,7 @@ dependencies = [
     "Flask-WTF>=1.2,<2.0",
     "SQLAlchemy>=2.0,<3.0",
     "alembic>=1.13",
+    "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]
@@ -145,7 +146,7 @@ strict_equality = true
 plugins = []
 
 [[tool.mypy.overrides]]
-module = ["flask_wtf.*"]
+module = ["flask_wtf.*", "argon2.*"]
 ignore_missing_imports = true
 
 # The adoption kit is written against the consumer's package, which is not

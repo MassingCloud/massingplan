@@ -12,6 +12,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def _cmd_check(_args: argparse.Namespace) -> int:
@@ -141,6 +142,178 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_init_db(_args: argparse.Namespace) -> int:
+    """Run migrations and seed the default organisation."""
+    from .config import Settings
+    from .database import init_engine, session_scope
+    from .services import repository as repo
+
+    settings = Settings()
+    init_engine(settings.database_url)
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(config, "head")
+    with session_scope() as session:
+        repo.ensure_default_organization(session)
+    print(f"schema is at head on {settings.database_url}")
+    return 0
+
+
+def _cmd_create_admin(args: argparse.Namespace) -> int:
+    """Create an owner. The password is read from the environment, never argv.
+
+    A password passed as an argument is in the shell history, in `ps` output,
+    and in the process list of every other user on the box.
+    """
+    import os
+
+    from .config import Settings
+    from .database import init_engine, session_scope
+    from .models.identity import Role
+    from .services import accounts
+    from .services import repository as repo
+
+    password = os.getenv("MASSINGPLAN_ADMIN_PASSWORD", "")
+    if not password:
+        print(
+            "set MASSINGPLAN_ADMIN_PASSWORD in the environment. Passing a password "
+            "as an argument leaves it in shell history and in `ps` output.",
+            file=sys.stderr,
+        )
+        return 2
+
+    settings = Settings()
+    init_engine(settings.database_url)
+    try:
+        with session_scope() as session:
+            org = repo.ensure_default_organization(session)
+            user = accounts.register(
+                session,
+                email=args.email,
+                password=password,
+                display_name=args.name or args.email,
+                organization_id=org.id,
+                role=Role.OWNER,
+            )
+            accounts.audit(
+                session,
+                organization_id=org.id,
+                action="user.create",
+                actor_id=user.id,
+                actor_label=user.email,
+                summary="created an owner from the command line",
+            )
+    except accounts.AccountError as exc:
+        print(f"could not create the account: {exc}", file=sys.stderr)
+        return 1
+    print(f"created owner {args.email}")
+    return 0
+
+
+def _cmd_seed_demo(_args: argparse.Namespace) -> int:
+    """A signed-in account and the demo project, for a fresh install."""
+    from .config import Settings
+    from .database import init_engine, session_scope
+    from .services import accounts, projects
+    from .services import repository as repo
+
+    settings = Settings()
+    init_engine(settings.database_url)
+    with session_scope() as session:
+        org = repo.ensure_default_organization(session)
+        created = accounts.bootstrap_demo_account(session, organization_id=org.id)
+        if created is None:
+            print("an account already exists; not seeding a demo one")
+        else:
+            user, password = created
+            # Printed once, random, never a documented default. A published
+            # default password is a published vulnerability the moment somebody
+            # exposes the port.
+            print(f"demo account: {user.email}")
+            print(f"password:     {password}")
+
+        from .api.schedules import exchange_from_payload  # noqa: F401
+        from .services.demo import demo_payload
+
+        payload = demo_payload()
+        schedule = _schedule_from_demo(payload)
+        if not repo.list_projects(session, org.id):
+            projects.import_schedule(
+                session, schedule, organization_id=org.id, name=payload["name"]
+            )
+            print("seeded the demo project")
+    return 0
+
+
+def _schedule_from_demo(payload: dict) -> Any:
+    """Turn the demo payload into a hub-model schedule the store accepts."""
+    from datetime import date
+
+    from .core.constraints import parse as parse_constraint
+    from .core.model import (
+        Calendar,
+        CalendarException,
+        ExchangeActivity,
+        ExchangeRelationship,
+        ExchangeSchedule,
+    )
+    from .core.network import ActivityKind, RelationType
+
+    def as_date(value: object) -> date | None:
+        return date.fromisoformat(str(value)) if value else None
+
+    schedule = ExchangeSchedule(
+        project_name=payload["name"],
+        data_date=as_date(payload.get("data_date")),
+        planned_start=as_date(payload.get("data_date")),
+        source_format="demo",
+    )
+    for index, cal in enumerate(payload["calendars"]):
+        schedule.calendars.append(
+            Calendar(
+                id=cal["id"],
+                name=cal["name"],
+                working_weekdays=set(cal["working_weekdays"]),
+                exceptions=[
+                    CalendarException(day, working=False)
+                    for day in (as_date(h) for h in cal.get("holidays", []))
+                    if day
+                ],
+                is_default=index == 0,
+            )
+        )
+    schedule.default_calendar_id = schedule.calendars[0].id
+    for entry in payload["activities"]:
+        schedule.activities.append(
+            ExchangeActivity(
+                id=entry["id"],
+                name=entry["name"],
+                kind=ActivityKind(entry.get("kind", "task")),
+                calendar_id=entry.get("calendar_id"),
+                duration_days=int(entry.get("duration_days", 0)),
+                constraint=parse_constraint(entry.get("constraint")),
+                constraint_date=as_date(entry.get("constraint_date")),
+                code=entry["id"],
+            )
+        )
+        for pred in entry.get("predecessors", []):
+            if isinstance(pred, str):
+                schedule.relationships.append(ExchangeRelationship(pred, entry["id"]))
+            else:
+                schedule.relationships.append(
+                    ExchangeRelationship(
+                        pred["id"],
+                        entry["id"],
+                        RelationType(pred.get("type", "FS")),
+                        int(pred.get("lag_days", 0)),
+                    )
+                )
+    return schedule
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="massingplan", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -161,6 +334,19 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("demo", help="print the worked demo schedule")
     demo.add_argument("--progressed", action="store_true", help="the same job with actuals")
     demo.set_defaults(func=_cmd_demo)
+
+    sub.add_parser(
+        "init-db", help="migrate to head and seed the default organisation"
+    ).set_defaults(func=_cmd_init_db)
+
+    admin = sub.add_parser("create-admin", help="create an owner (password from the environment)")
+    admin.add_argument("email")
+    admin.add_argument("--name", default="")
+    admin.set_defaults(func=_cmd_create_admin)
+
+    sub.add_parser("seed-demo", help="create a demo account and project").set_defaults(
+        func=_cmd_seed_demo
+    )
 
     return parser
 

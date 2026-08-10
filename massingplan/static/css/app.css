@@ -133,3 +133,22 @@ button:hover { filter: brightness(1.08); }
 
 .footer { border-top: 1px solid var(--line); padding: 1.25rem 1.5rem; }
 .footer p { max-width: 68rem; margin: 0 auto; font-size: 0.78rem; color: var(--muted); }
+
+/* -- auth and nav --------------------------------------------------------- */
+.masthead nav form.inline { display: inline; margin: 0; }
+.linkish {
+  background: none; border: none; padding: 0; color: var(--muted);
+  font: inherit; cursor: pointer;
+}
+.linkish:hover { color: var(--accent); }
+.uploader input[type="text"], .uploader input[type="email"], .uploader input[type="password"] {
+  font: inherit; padding: 0.4rem 0.55rem; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--paper); color: var(--ink); width: 100%;
+}
+.attribution { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+.attribution li { margin: 0.2rem 0; }
+.key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }
+.banner-once {
+  border: 1px solid var(--accent); border-radius: 6px; padding: 0.85rem 1rem; margin: 1rem 0;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

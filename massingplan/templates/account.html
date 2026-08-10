@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Account — massingplan{% endblock %}
+{% block content %}
+<h1>{{ principal.label }}</h1>
+<p class="note">
+  {{ principal.role.value if principal.role else "no role" }} in this organisation,
+  authenticated by {{ principal.via.replace("_", " ") }}.
+</p>
+
+{% if issued_key %}
+{# Shown once. Storing it to show again would defeat hashing it at rest. #}
+<div class="banner-once">
+  <p><strong>Copy this key now. It is not shown again and is not stored.</strong></p>
+  <p class="key">{{ issued_key }}</p>
+</div>
+{% endif %}
+
+{% if organizations|length > 1 %}
+<h2>Organisations</h2>
+<ul class="plain">
+  {% for org in organizations %}
+  <li>
+    {{ org.name }}
+    {% if org.id != principal.organization_id %}
+    <form method="post" action="{{ url_for('auth.switch', organization_id=org.id) }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="linkish">switch</button>
+    </form>
+    {% else %}<span class="tag">active</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>API keys</h2>
+{% if keys %}
+<table class="checks">
+  <thead><tr><th>Name</th><th>Key</th><th>Role</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+    {% for k in keys %}
+    <tr>
+      <td>{{ k.name }}</td>
+      <td class="key">{{ k.prefix }}…</td>
+      <td class="muted">{{ k.role.value }}</td>
+      <td class="muted">{{ k.last_used_at.date() if k.last_used_at else "never" }}</td>
+      <td>
+        {% if k.is_active and principal.can(Permission.KEY_MANAGE) %}
+        <form method="post" action="{{ url_for('main.revoke_key', key_id=k.id) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="linkish">revoke</button>
+        </form>
+        {% elif not k.is_active %}<span class="muted">revoked {{ k.revoked_at.date() }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="note">No keys yet.</p>
+{% endif %}
+
+{% if principal.can(Permission.KEY_MANAGE) %}
+<form method="post" action="{{ url_for('main.create_key') }}" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="key-name">New key for</label>
+  <input type="text" id="key-name" name="name" placeholder="CI pipeline" required>
+  <button type="submit">Issue key</button>
+</form>
+{% endif %}
+
+<h2>Recent activity</h2>
+{% if events %}
+<table class="checks">
+  <thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td class="muted">{{ e.at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td>{{ e.actor_label or "—" }}</td>
+      <td><code>{{ e.action }}</code> {{ e.summary }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="note">Nothing recorded yet.</p>
+{% endif %}
+{% endblock %}

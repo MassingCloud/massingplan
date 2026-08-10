@@ -22,22 +22,77 @@ TEMPLATES = Path(__file__).resolve().parent.parent / "massingplan" / "templates"
 
 
 @pytest.fixture
-def app():  # type: ignore[no-untyped-def]
-    application = create_app(Settings(env="testing", secret_key="test-key-not-a-secret"))
+def app(tmp_path):  # type: ignore[no-untyped-def]
+    from massingplan import database
+    from massingplan.services import repository as repo
+
+    application = create_app(
+        Settings(
+            env="testing",
+            secret_key="test-key-not-a-secret",
+            database_url=f"sqlite:///{tmp_path / 'app.db'}",
+        )
+    )
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
+    database.create_all()
+    with database.session_scope() as session:
+        repo.ensure_default_organization(session)
     return application
 
 
 @pytest.fixture
-def client(app):  # type: ignore[no-untyped-def]
-    return app.test_client()
+def api_key(app):  # type: ignore[no-untyped-def]
+    """A key for the JSON API, which refuses anonymous calls."""
+    from massingplan import database
+    from massingplan.services import accounts
+    from massingplan.services import repository as repo
+
+    with database.session_scope() as session:
+        plaintext, _record = accounts.issue_api_key(
+            session, organization_id=repo.DEFAULT_ORG_ID, name="tests"
+        )
+    return plaintext
+
+
+@pytest.fixture
+def client(app, api_key):  # type: ignore[no-untyped-def]
+    """A client that presents the key on every request.
+
+    The API is closed by default now; a client that does not authenticate
+    exercises the 401 path and nothing else.
+    """
+    handle = app.test_client()
+    handle.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {api_key}"
+    return handle
+
+
+@pytest.fixture
+def signed_in(app):  # type: ignore[no-untyped-def]
+    """A browser session for the page routes."""
+    from massingplan import database
+    from massingplan.services import accounts
+    from massingplan.services import repository as repo
+
+    with database.session_scope() as session:
+        accounts.register(
+            session,
+            email="pages@example.com",
+            password="a-long-enough-passphrase",
+            organization_id=repo.DEFAULT_ORG_ID,
+        )
+    handle = app.test_client()
+    handle.post(
+        "/auth/sign-in",
+        data={"email": "pages@example.com", "password": "a-long-enough-passphrase"},
+    )
+    return handle
 
 
 # -- the route walk --------------------------------------------------------
 
 
-def test_every_get_route_answers(app, client) -> None:  # type: ignore[no-untyped-def]
+def test_every_get_route_answers(app, signed_in) -> None:  # type: ignore[no-untyped-def]
     """Walk `url_map` rather than a hand-written list.
 
     In the source repo this found nine unwritten templates, two broken helper
@@ -47,7 +102,7 @@ def test_every_get_route_answers(app, client) -> None:  # type: ignore[no-untype
     for rule in app.url_map.iter_rules():
         if "GET" not in rule.methods or rule.arguments:
             continue
-        response = client.get(rule.rule)
+        response = signed_in.get(rule.rule)
         assert response.status_code < 500, f"{rule.rule} returned {response.status_code}"
         walked += 1
     assert walked >= 6, f"the walk only covered {walked} routes"
@@ -57,27 +112,58 @@ def test_no_route_is_skipped_silently(app) -> None:
     """Guard the guard: adding a URL parameter must not quietly drop a route
     from the walk above without anyone noticing.
     """
-    parameterised = [
-        r.rule
+    parameterised = {
+        r.endpoint
         for r in app.url_map.iter_rules()
         # Flask's own static handler, not ours.
         if r.arguments and r.endpoint != "static"
-    ]
-    assert parameterised == [], (
-        "these routes take parameters and are therefore skipped by the route "
-        f"walk; give them explicit tests: {parameterised}"
+    }
+    # An allow-list rather than an empty assertion, because parameterised routes
+    # are legitimate -- what is not legitimate is one nobody tests. Every entry
+    # here is covered by name: the project pages and tenant isolation in
+    # test_auth.py, key revocation and org switching likewise.
+    covered_by_name = {
+        "main.project_detail",
+        "main.set_baseline",
+        "main.delete_project",
+        "main.export_xer",
+        "main.revoke_key",
+        "auth.switch",
+    }
+    assert parameterised <= covered_by_name, (
+        "these routes take parameters, are skipped by the route walk, and have "
+        f"no named test: {sorted(parameterised - covered_by_name)}"
     )
 
 
-def test_every_url_for_in_a_template_resolves(app) -> None:
+URL_FOR = re.compile(r"""url_for\(\s*['"]([^'"]+)['"]""")
+
+
+def test_every_url_for_in_a_template_resolves(app) -> None:  # type: ignore[no-untyped-def]
     """A `url_for` naming an endpoint that does not exist raises BuildError and
     takes the whole page down. Cheaper to find here.
     """
     endpoints = {rule.endpoint for rule in app.url_map.iter_rules()}
-    pattern = re.compile(r"url_for\(\s*['\"]([^'\"]+)['\"]")
     for template in TEMPLATES.rglob("*.html"):
-        for endpoint in pattern.findall(template.read_text(encoding="utf-8")):
+        for endpoint in URL_FOR.findall(template.read_text(encoding="utf-8")):
             assert endpoint in endpoints, f"{template.name} references unknown endpoint {endpoint}"
+
+
+def test_every_url_for_in_python_resolves(app) -> None:  # type: ignore[no-untyped-def]
+    """The same check over the views themselves.
+
+    The template version of this missed a `url_for("main.projects")` in a
+    redirect -- the endpoint is `main.projects_list` -- and the only symptom was
+    a 500 *after* the sign-in had already succeeded, so the user was logged in
+    and staring at an error page.
+    """
+    endpoints = {rule.endpoint for rule in app.url_map.iter_rules()}
+    root = TEMPLATES.parent
+    for module in root.rglob("*.py"):
+        for endpoint in URL_FOR.findall(module.read_text(encoding="utf-8")):
+            assert endpoint in endpoints, (
+                f"{module.relative_to(root)} references unknown endpoint {endpoint}"
+            )
 
 
 # -- the CSP promise -------------------------------------------------------
@@ -94,8 +180,8 @@ def test_no_template_loads_anything_from_another_host(app) -> None:
         assert not external.search(text), f"{template.name} loads from an external host"
 
 
-def test_the_security_headers_are_set(client) -> None:  # type: ignore[no-untyped-def]
-    response = client.get("/")
+def test_the_security_headers_are_set(signed_in) -> None:  # type: ignore[no-untyped-def]
+    response = signed_in.get("/", follow_redirects=True)
     csp = response.headers["Content-Security-Policy"]
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
@@ -259,12 +345,14 @@ def test_importing_an_xer_through_the_api(client) -> None:  # type: ignore[no-un
     assert len(result["activities"]) == 2
 
 
-def test_importing_through_the_web_page_renders_the_workspace(client) -> None:  # type: ignore[no-untyped-def]
+def test_importing_through_the_web_page_renders_the_workspace(signed_in) -> None:  # type: ignore[no-untyped-def]
     data = {"file": (io.BytesIO(XER.encode()), "tower.xer")}
-    response = client.post("/upload", data=data, content_type="multipart/form-data")
+    response = signed_in.post(
+        "/upload", data=data, content_type="multipart/form-data", follow_redirects=True
+    )
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Excavate" in body or "A1010" in body
+    assert "A1010" in body
 
 
 def test_an_unreadable_upload_is_refused_by_name(client) -> None:  # type: ignore[no-untyped-def]

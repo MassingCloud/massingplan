@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Create an account — massingplan{% endblock %}
+{% block content %}
+<h1>Create an account</h1>
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+<form method="post" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="display_name">Your name</label>
+  <input type="text" id="display_name" name="display_name" autocomplete="name">
+  <label for="email">Email</label>
+  <input type="email" id="email" name="email" autocomplete="username" required>
+  <label for="password">Password <span class="muted">(at least 12 characters)</span></label>
+  <input type="password" id="password" name="password" autocomplete="new-password"
+         minlength="12" required>
+  <label for="organization">Organisation <span class="muted">(leave blank to join the default)</span></label>
+  <input type="text" id="organization" name="organization">
+  <button type="submit">Create account</button>
+</form>
+{# Length, not composition rules. Forced symbols produce `P@ssw0rd!` and a
+   sticky note; length is the only requirement that reliably helps. #}
+<p class="note">
+  A long passphrase beats a short one with symbols in it. Four unrelated words
+  is stronger than anything you will remember with punctuation in the middle.
+</p>
+{% endblock %}

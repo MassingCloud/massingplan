@@ -83,6 +83,85 @@
 </section>
 {% endif %}
 
+{% if project %}
+<section>
+  <h2>Baselines</h2>
+  {% if baselines %}
+  <table class="checks">
+    <thead><tr><th>Name</th><th>Set</th><th>Data date</th><th>Finish</th><th></th></tr></thead>
+    <tbody>
+      {% for b in baselines %}
+      <tr>
+        <td><strong>{{ b.name }}</strong>{% if b.is_current %} <span class="tag">current</span>{% endif %}</td>
+        <td class="muted">{{ b.created_at.date() }}</td>
+        <td>{{ b.data_date or "—" }}</td>
+        <td>{{ b.project_finish or "—" }}</td>
+        <td><a href="{{ url_for('main.project_detail', project_id=project.id, compare=b.id) }}">Compare</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">
+    No baseline yet. Until there is one, DCMA checks 11 and 14 cannot run and
+    there is nothing to attribute a delay against — both report as
+    <em>skipped</em> above, which is not the same as passing.
+  </p>
+  {% endif %}
+  {% if principal.can(Permission.BASELINE_SET) %}
+  <form method="post" action="{{ url_for('main.set_baseline', project_id=project.id) }}"
+        class="uploader">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="bl-name">Freeze the current schedule as</label>
+    <input type="text" id="bl-name" name="name" placeholder="GMP" required>
+    <button type="submit">Set baseline</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if comparison %}
+<section>
+  <h2>Against {{ chosen_baseline.name }}</h2>
+  {% set dp = comparison.driving_path %}
+  <p class="note">
+    The finish moved
+    <strong>{{ dp.finish_move_days }} day{{ "" if dp.finish_move_days == 1 else "s" }}</strong>.
+    {% if dp.attribution_sums %}
+      Every day of it is accounted for below.
+    {% else %}
+      <span class="pill pill-fail">does not sum</span>
+      The contributions do not add up to the movement — that is a bug, not a
+      rounding difference, and the analysis should not be relied on.
+    {% endif %}
+  </p>
+  <ul class="attribution">
+    {% for c in dp.attribution %}
+    <li>
+      <strong>{{ "%+d"|format(c.days) }}d</strong>
+      <span class="tag">{{ c.cause.replace("_", " ") }}</span>
+      {% if c.activity_id %}<code>{{ c.activity_id }}</code>{% endif %}
+      <span class="muted">{{ c.evidence }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if dp.entered or dp.left %}
+  <p class="note">
+    Driving path changed:
+    {% if dp.entered %}<strong>joined</strong> {{ dp.entered|join(", ") }}{% endif %}
+    {% if dp.left %} &middot; <strong>left</strong> {{ dp.left|join(", ") }}{% endif %}
+  </p>
+  {% endif %}
+  {% if comparison.ambiguous_matches %}
+  <p class="note">
+    {{ comparison.ambiguous_matches|length }} activities could not be matched
+    unambiguously and were left out rather than paired. Pairing two activities
+    with the same name reports a slip that never happened.
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
 <section>
   <h2>Schedule</h2>
   <div id="gantt"
@@ -148,6 +227,21 @@
       {% endfor %}
     </tbody>
   </table>
+</section>
+{% endif %}
+{% if project %}
+<section>
+  <h2>Actions</h2>
+  <p>
+    <a href="{{ url_for('main.export_xer', project_id=project.id) }}">Export as .xer</a>
+  </p>
+  {% if principal.can(Permission.PROJECT_DELETE) %}
+  <form method="post" action="{{ url_for('main.delete_project', project_id=project.id) }}"
+        onsubmit="return confirm('Delete {{ project.code }} and everything in it? Baselines go too.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit">Delete this project</button>
+  </form>
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}

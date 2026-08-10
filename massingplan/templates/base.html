@@ -13,9 +13,18 @@
   <header class="masthead">
     <a class="wordmark" href="{{ url_for('main.index') }}">massing<strong>plan</strong></a>
     <nav>
-      <a href="{{ url_for('main.demo') }}">Demo</a>
-      <a href="{{ url_for('main.upload') }}">Import</a>
-      <a href="/api/massingplan/v1/capabilities">API</a>
+      {% if principal and principal.is_authenticated %}
+        <a href="{{ url_for('main.projects_list') }}">Projects</a>
+        <a href="{{ url_for('main.upload') }}">Import</a>
+        <a href="{{ url_for('main.account') }}">{{ principal.label }}</a>
+        <form method="post" action="{{ url_for('auth.sign_out') }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="linkish">Sign out</button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('main.demo') }}">Demo</a>
+        <a href="{{ url_for('auth.sign_in_page') }}">Sign in</a>
+      {% endif %}
     </nav>
   </header>
   <main class="shell">

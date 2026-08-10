@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Projects — massingplan{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+
+{% if not projects %}
+<p class="lede">Nothing here yet.</p>
+<p><a class="card" href="{{ url_for('main.upload') }}">
+  <h2>Import a schedule</h2>
+  <p>A Primavera <code>.xer</code> or an MS Project <code>.xml</code>.</p>
+</a></p>
+{% else %}
+<table class="activities">
+  <thead>
+    <tr>
+      <th>Project</th><th>Data date</th><th>Finish</th>
+      <th class="num">Days</th><th class="num">Activities</th>
+      <th>Baseline</th><th class="num">Slip</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in projects %}
+    <tr>
+      <td>
+        <a href="{{ url_for('main.project_detail', project_id=p.id) }}">
+          <strong>{{ p.code }}</strong> {{ p.name }}
+        </a>
+        {% if p.error %}<span class="tag tag-warn">{{ p.error }}</span>{% endif %}
+      </td>
+      <td>{{ p.data_date or "—" }}</td>
+      <td>{{ p.project_finish or "—" }}</td>
+      <td class="num">{{ p.duration_working_days if p.duration_working_days is defined else "—" }}</td>
+      <td class="num">{{ p.activity_count if p.activity_count is defined else "—" }}</td>
+      <td class="muted">{{ p.baseline or "none" }}</td>
+      {# `None` is not zero. No baseline is not "on time". #}
+      <td class="num">
+        {% if p.slip_days is none %}—
+        {% elif p.slip_days > 0 %}<span class="pill pill-fail">+{{ p.slip_days }}d</span>
+        {% elif p.slip_days < 0 %}<span class="pill pill-pass">{{ p.slip_days }}d</span>
+        {% else %}0{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p><a href="{{ url_for('main.upload') }}">Import another schedule</a></p>
+{% endif %}
+{% endblock %}

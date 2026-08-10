@@ -22,8 +22,13 @@ class Settings:
             "MASSINGPLAN_DATABASE_URL", "sqlite:///instance/massingplan.db"
         )
     )
+    log_level: str = field(default_factory=lambda: os.getenv("MASSINGPLAN_LOG_LEVEL", "INFO"))
     max_upload_bytes: int = field(
         default_factory=lambda: int(os.getenv("MASSINGPLAN_MAX_UPLOAD_BYTES", 16 * 1024 * 1024))
+    )
+
+    session_lifetime_seconds: int = field(
+        default_factory=lambda: int(os.getenv("MASSINGPLAN_SESSION_LIFETIME", 12 * 3600))
     )
 
     @property
@@ -49,4 +54,7 @@ class Settings:
             "SESSION_COOKIE_SAMESITE": "Lax",
             "SESSION_COOKIE_SECURE": self.is_production,
             "JSON_SORT_KEYS": False,
+            # Sessions expire. A browser cookie that never ages is a credential
+            # left on a shared machine indefinitely.
+            "PERMANENT_SESSION_LIFETIME": self.session_lifetime_seconds,
         }

@@ -57,6 +57,12 @@ class Decision:
 #: concurrent Monte Carlo runs is a denial of service by accident.
 LIMITS: dict[str, Limit] = {
     "auth.sign_in": Limit(20, 900),
+    # Tighter than sign-in, because the search space is smaller. A six-digit
+    # code is one in a million per guess, but a guess costs nothing and the
+    # window is thirty seconds wide: unlimited attempts make the second factor
+    # decorative. Ten per fifteen minutes leaves a fat-fingered user room and an
+    # attacker none.
+    "auth.mfa_challenge": Limit(10, 900),
     "auth.register": Limit(10, 3600),
     "main.create_key": Limit(20, 3600),
     "schedule_api.risk": Limit(30, 60),

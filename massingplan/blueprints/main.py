@@ -12,12 +12,18 @@ from flask import Blueprint, redirect, render_template, request, url_for
 
 from ..api import errors, schedules
 from ..models.identity import Permission
-from ..services import accounts, projects
+from ..services import accounts, mfa, projects
 from ..services import repository as repo
 from ..services.demo import demo_payload
 from . import deps
 
 bp = Blueprint("main", __name__)
+
+#: An enrolment in flight. Held in the session, not the database: a secret
+#: written before the user proves they can produce a code from it leaves an
+#: account demanding a factor nobody has.
+MFA_PENDING_SECRET = "mfa_pending_secret"  # noqa: S105 - a session key, not a secret
+MFA_PENDING_RECOVERY = "mfa_pending_recovery"
 
 
 @bp.get("/")
@@ -274,6 +280,8 @@ def account() -> Any:
         keys=keys,
         events=events,
         issued_key=request.args.get("issued", ""),
+        mfa_enabled=bool(user and mfa.is_enabled(user)),
+        mfa_available=mfa.is_available(),
     )
 
 
@@ -305,6 +313,158 @@ def create_key() -> Any:
     # Shown once, in the URL of a redirect the user already has. Storing it to
     # show later would defeat hashing it at rest.
     return redirect(url_for("main.account", issued=plaintext))
+
+
+@bp.get("/account/mfa")
+@deps.login_required
+def mfa_setup() -> Any:
+    """Show the QR and the recovery codes. Nothing is stored yet.
+
+    The secret is parked in the session for this one step rather than written to
+    the database, because a half-finished enrolment would otherwise leave an
+    account demanding a factor nobody can produce, fixable only by an
+    administrator.
+    """
+    from ..models import User
+
+    principal = deps.current_principal()
+    user = deps.db().get(User, principal.subject_id)
+    if user is None:
+        raise errors.NotFound("no such account")
+
+    if mfa.is_enabled(user):
+        return render_template(
+            "account_mfa.html",
+            enabled=True,
+            enrolment=None,
+            display_secret="",
+            remaining=mfa.remaining_recovery_codes(user),
+            error=None,
+        )
+    if not mfa.is_available():
+        return render_template(
+            "account_mfa.html",
+            enabled=False,
+            enrolment=None,
+            display_secret="",
+            remaining=0,
+            error=(
+                "Two-factor authentication is not available on this install. It "
+                "needs `pip install 'massingplan[mfa]'` and a "
+                "MASSINGPLAN_ENCRYPTION_KEY."
+            ),
+        )
+
+    enrolment = mfa.begin_enrolment(user)
+    session_store = deps.web_session()
+    session_store[MFA_PENDING_SECRET] = enrolment.secret
+    session_store[MFA_PENDING_RECOVERY] = enrolment.recovery_codes
+    return render_template(
+        "account_mfa.html",
+        enabled=False,
+        enrolment=enrolment,
+        display_secret=mfa.secret_for_display(enrolment.secret),
+        remaining=0,
+        error=None,
+    )
+
+
+@bp.post("/account/mfa")
+@deps.login_required
+def mfa_enable() -> Any:
+    from ..models import User
+
+    principal = deps.current_principal()
+    session_store = deps.web_session()
+    secret = session_store.get(MFA_PENDING_SECRET)
+    recovery = list(session_store.get(MFA_PENDING_RECOVERY) or [])
+    if not secret:
+        # The enrolment expired or the session was cleared. Start again rather
+        # than storing a secret the user's phone may no longer hold.
+        return redirect(url_for("main.mfa_setup"))
+
+    try:
+        with deps.committing() as session:
+            user = session.get(User, principal.subject_id)
+            if user is None:
+                raise errors.NotFound("no such account")
+            mfa.confirm_enrolment(
+                session,
+                user,
+                secret=secret,
+                code=request.form.get("code", ""),
+                recovery_codes=recovery,
+            )
+            accounts.audit(
+                session,
+                organization_id=principal.organization_id or "",
+                action="mfa.enable",
+                actor_id=principal.subject_id,
+                actor_label=principal.label,
+                subject_type="user",
+                subject_id=user.id,
+                summary="enabled two-factor authentication",
+            )
+    except mfa.MfaError as exc:
+        # Re-render with the *same* secret and codes. Issuing a new pair here
+        # would invalidate the QR the user has already scanned, so a mistyped
+        # digit would mean starting over.
+        return (
+            render_template(
+                "account_mfa.html",
+                enabled=False,
+                enrolment=mfa.Enrolment(secret=secret, uri="", qr_svg="", recovery_codes=recovery),
+                display_secret=mfa.secret_for_display(secret),
+                remaining=0,
+                error=str(exc),
+            ),
+            400,
+        )
+
+    session_store.pop(MFA_PENDING_SECRET, None)
+    session_store.pop(MFA_PENDING_RECOVERY, None)
+    return redirect(url_for("main.account"))
+
+
+@bp.post("/account/mfa/disable")
+@deps.login_required
+def mfa_disable() -> Any:
+    """Turning it off needs the current password.
+
+    Otherwise a borrowed session strips the factor that session was supposed to
+    be protected by, which is the one moment the factor exists for.
+    """
+    from ..models import User
+
+    principal = deps.current_principal()
+    with deps.committing() as session:
+        user = session.get(User, principal.subject_id)
+        if user is None:
+            raise errors.NotFound("no such account")
+        if not accounts.verify_password(request.form.get("password", ""), user.password_hash):
+            return (
+                render_template(
+                    "account_mfa.html",
+                    enabled=True,
+                    enrolment=None,
+                    display_secret="",
+                    remaining=mfa.remaining_recovery_codes(user),
+                    error="That password did not match.",
+                ),
+                401,
+            )
+        mfa.disable(session, user)
+        accounts.audit(
+            session,
+            organization_id=principal.organization_id or "",
+            action="mfa.disable",
+            actor_id=principal.subject_id,
+            actor_label=principal.label,
+            subject_type="user",
+            subject_id=user.id,
+            summary="disabled two-factor authentication",
+        )
+    return redirect(url_for("main.account"))
 
 
 @bp.post("/account/keys/<key_id>/revoke")

@@ -24,6 +24,10 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 SESSION_USER_KEY = "user_id"
 SESSION_ORG_KEY = "organization_id"
+#: Set between a correct password and a correct second factor. It holds a user
+#: id and nothing else -- the user is *not* signed in while it is set, so a
+#: half-authenticated session cannot reach a project.
+SESSION_PENDING_MFA_KEY = "pending_mfa_user_id"
 
 
 def db() -> Session:
@@ -120,6 +124,25 @@ def sign_in(user: User, organization_id: str) -> None:
 
 def sign_out() -> None:
     session.clear()
+
+
+def begin_mfa(user: User) -> None:
+    """Park the user between factors. Not signed in yet."""
+    session.clear()
+    session[SESSION_PENDING_MFA_KEY] = user.id
+
+
+def pending_mfa_user_id() -> str | None:
+    return session.get(SESSION_PENDING_MFA_KEY)
+
+
+def web_session() -> Any:
+    """The Flask session, behind a name.
+
+    So that enrolment can park a half-finished secret without every blueprint
+    importing `flask.session` directly and reaching for keys nobody has named.
+    """
+    return session
 
 
 def wants_json() -> bool:

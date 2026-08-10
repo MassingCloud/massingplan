@@ -32,6 +32,23 @@
 </ul>
 {% endif %}
 
+<h2>Two-factor authentication</h2>
+{% if mfa_enabled %}
+<p class="note">
+  On. <a href="{{ url_for('main.mfa_setup') }}">Manage or turn off</a>.
+</p>
+{% elif mfa_available %}
+<p class="note">
+  Off. <a href="{{ url_for('main.mfa_setup') }}">Turn it on</a> — a stolen
+  password alone is then not enough.
+</p>
+{% else %}
+<p class="note">
+  Not available on this install. It needs <code>pip install
+  'massingplan[mfa]'</code> and a <code>MASSINGPLAN_ENCRYPTION_KEY</code>.
+</p>
+{% endif %}
+
 <h2>API keys</h2>
 {% if keys %}
 <table class="checks">

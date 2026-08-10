@@ -14,7 +14,7 @@
   <thead>
     <tr>
       <th>Project</th><th>Data date</th><th>Finish</th>
-      <th class="num">Days</th><th class="num">Activities</th>
+      <th class="num">Activities</th><th class="num">Critical</th>
       <th>Baseline</th><th class="num">Slip</th>
     </tr>
   </thead>
@@ -25,12 +25,13 @@
         <a href="{{ url_for('main.project_detail', project_id=p.id) }}">
           <strong>{{ p.code }}</strong> {{ p.name }}
         </a>
-        {% if p.error %}<span class="tag tag-warn">{{ p.error }}</span>{% endif %}
+        {# "not computed yet" rather than a blank date, which reads as a bug. #}
+        {% if p.stale %}<span class="tag tag-warn">not scheduled yet</span>{% endif %}
       </td>
       <td>{{ p.data_date or "—" }}</td>
       <td>{{ p.project_finish or "—" }}</td>
-      <td class="num">{{ p.duration_working_days if p.duration_working_days is defined else "—" }}</td>
-      <td class="num">{{ p.activity_count if p.activity_count is defined else "—" }}</td>
+      <td class="num">{{ p.activity_count }}</td>
+      <td class="num">{{ p.critical_count }}</td>
       <td class="muted">{{ p.baseline or "none" }}</td>
       {# `None` is not zero. No baseline is not "on time". #}
       <td class="num">

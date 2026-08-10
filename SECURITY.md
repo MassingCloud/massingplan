@@ -92,7 +92,13 @@ that refusal.
 Named honestly, because a security document that lists only strengths is a
 marketing document.
 
-- **No MFA.** Password plus session only.
+- **MFA is opt-in and off by default**, and unavailable at all without
+  `pip install 'massingplan[mfa]'` plus a `MASSINGPLAN_ENCRYPTION_KEY`. Where it
+  is on: TOTP, secrets encrypted at rest with Fernet, hashed single-use recovery
+  codes, no reachable state between the two factors, replay refused inside the
+  drift window, and ten attempts per fifteen minutes. **API keys bypass it by
+  design** — a CI job cannot type a code, so the factor protects the interactive
+  session and not the machine credential.
 - **No SSO.** The OIDC adapter seam exists; its implementation does not.
 - **Rate limiting is per-process.** Credential endpoints and the expensive
   compute endpoints are limited, but the store is in-memory: with four workers
@@ -100,7 +106,11 @@ marketing document.
   at startup when it detects more than one worker, and `massingplan check`
   prints the scope. For a real limit across replicas, put one at your ingress.
 - **No encryption at rest for schedule content** beyond whatever the database
-  and the disk provide.
+  and the disk provide. Only TOTP secrets are encrypted, deliberately: an
+  attacker who can read the database holds the key too, so column encryption
+  buys nothing there. What it protects is the narrower and realer case of a
+  leaked backup, where the key stays in the environment and does not travel with
+  the dump — which is only true if you store the two apart.
 - **No signed webhooks in use.** The HMAC primitives exist in `security.py` and
   nothing calls them yet.
 - **No penetration test.** Nobody outside the project has tried to break it.

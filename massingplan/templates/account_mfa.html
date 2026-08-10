@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Two-factor authentication — massingplan{% endblock %}
+{% block content %}
+<h1>Two-factor authentication</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if enabled %}
+<p class="lede">
+  Enabled. {{ remaining }} recovery code{{ "" if remaining == 1 else "s" }} left.
+</p>
+{% if remaining <= 2 %}
+<div class="alert alert-error">
+  Running low on recovery codes. Turn two-factor off and on again to get a fresh
+  set — with none left and no phone, only an administrator can restore access.
+</div>
+{% endif %}
+
+{# Disabling asks for the password. Otherwise a borrowed session removes the
+   factor that session was supposed to be protected by. #}
+<form method="post" action="{{ url_for('main.mfa_disable') }}" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="pw">Confirm your password to turn it off</label>
+  <input type="password" id="pw" name="password" autocomplete="current-password" required>
+  <button type="submit">Turn off</button>
+</form>
+
+{% elif enrolment %}
+<p class="lede">Scan this with an authenticator app, then enter a code to confirm.</p>
+
+{# Inline SVG, not an image URL. Every "generate a QR" service is a third party
+   you have just handed a TOTP secret to, and pointing at one would also need a
+   hole in default-src 'self'. #}
+<div class="qr">{{ enrolment.qr_svg | safe }}</div>
+
+<p class="note">
+  Cannot scan? Type this key in by hand: <code class="key">{{ display_secret }}</code>
+</p>
+
+<h2>Recovery codes</h2>
+<div class="banner-once">
+  <p><strong>Save these now. They are not shown again.</strong></p>
+  <p class="key">{{ enrolment.recovery_codes | join("  ") }}</p>
+</div>
+<p class="note">
+  Each works once, and they are stored hashed — there is no way to print them a
+  second time. With no phone and no codes left, only an administrator can get
+  you back in.
+</p>
+
+<form method="post" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label for="code">Code from your app</label>
+  <input type="text" id="code" name="code" autocomplete="one-time-code"
+         inputmode="numeric" required>
+  <button type="submit">Turn on</button>
+</form>
+{% endif %}
+
+<p class="note"><a href="{{ url_for('main.account') }}">Back to your account</a></p>
+{% endblock %}

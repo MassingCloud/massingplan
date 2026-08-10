@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Two-factor code — massingplan{% endblock %}
+{% block content %}
+<h1>Enter your code</h1>
+<p class="lede">Your password was accepted. One more step.</p>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<form method="post" class="uploader">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="code">Six-digit code from your app, or one recovery code</label>
+  <input type="text" id="code" name="code" autocomplete="one-time-code"
+         inputmode="text" autofocus required>
+  <button type="submit">Verify</button>
+</form>
+
+<p class="note">
+  Codes change every thirty seconds. If yours keeps being rejected, check the
+  clock on your phone before assuming the code is wrong — drift is the usual
+  cause. A recovery code works once and then is gone.
+</p>
+<p class="note"><a href="{{ url_for('auth.sign_out') }}">Cancel and sign out</a></p>
+{% endblock %}

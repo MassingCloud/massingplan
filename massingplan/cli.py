@@ -61,6 +61,26 @@ def _cmd_check(_args: argparse.Namespace) -> int:
 
     outcome = schedule_network([Task("probe", "probe", 1)], data_date=date(2026, 1, 1))
     print(f"{'engine':20} ok (probe finishes {outcome.project_finish})")
+
+    from .services import mfa
+
+    # Reported rather than assumed. "Two-factor is on" is a claim an operator
+    # will make to an auditor, and it is false on an install missing either the
+    # extra or the key -- with nothing on screen to say so.
+    print(f"{'two-factor':20} {'available' if mfa.is_available() else 'unavailable'}")
+    return 0
+
+
+def _cmd_gen_key(_args: argparse.Namespace) -> int:
+    """Print a new field-encryption key.
+
+    To stdout and nowhere else: writing it to a file would put it somewhere the
+    operator did not choose, and it belongs in a secret store rather than beside
+    the database it protects.
+    """
+    from .services.crypto import generate_key
+
+    print(generate_key())
     return 0
 
 
@@ -350,6 +370,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("seed-demo", help="create a demo account and project").set_defaults(
         func=_cmd_seed_demo
     )
+
+    sub.add_parser(
+        "gen-key", help="print a MASSINGPLAN_ENCRYPTION_KEY for two-factor auth"
+    ).set_defaults(func=_cmd_gen_key)
 
     return parser
 

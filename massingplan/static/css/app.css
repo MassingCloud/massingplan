@@ -152,3 +152,8 @@ button:hover { filter: brightness(1.08); }
   border: 1px solid var(--accent); border-radius: 6px; padding: 0.85rem 1rem; margin: 1rem 0;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
+/* The QR is inline SVG. It gets a white plate because in dark mode a dark-on-
+   dark code is unreadable to a phone camera -- the contrast is what a scanner
+   is looking for, not the colour. */
+.qr { display: inline-block; background: #fff; padding: 0.6rem; border-radius: 6px; margin: 0.75rem 0; }
+.qr svg { display: block; width: 11rem; height: 11rem; }

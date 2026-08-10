@@ -14,7 +14,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 
 from ..models import Organization
 from ..models.identity import Role
-from ..services import accounts
+from ..services import accounts, mfa
 from ..services import repository as repo
 from ..services.accounts import AccountError, SignInOutcome
 from . import deps
@@ -61,6 +61,13 @@ def sign_in() -> Any:
             error="This account is not a member of any organisation. Ask an owner to invite you.",
             next=target,
         ), 403
+
+    if mfa.is_enabled(result.user):
+        # Password accepted, and that is all it is. The session holds a user id
+        # and no authenticated principal, so nothing behind `login_required` is
+        # reachable until the second factor verifies.
+        deps.begin_mfa(result.user)
+        return redirect(url_for("auth.mfa_challenge_page", next=target))
 
     deps.sign_in(result.user, membership.organization_id)
     with deps.committing() as session:
@@ -157,4 +164,57 @@ def switch(organization_id: str) -> Any:
             error=type("E", (), {"message": "No such organisation.", "detail": None})(),
         ), 404
     flask_session[deps.SESSION_ORG_KEY] = organization_id
+    return redirect(url_for("main.projects_list"))
+
+
+# -- the second factor -----------------------------------------------------
+
+
+@bp.get("/mfa")
+def mfa_challenge_page() -> Any:
+    if deps.pending_mfa_user_id() is None:
+        return redirect(url_for("auth.sign_in_page"))
+    return render_template("auth/mfa.html", error=None, next=request.args.get("next", ""))
+
+
+@bp.post("/mfa")
+def mfa_challenge() -> Any:
+    from ..models import User
+
+    pending = deps.pending_mfa_user_id()
+    if pending is None:
+        return redirect(url_for("auth.sign_in_page"))
+
+    target = request.form.get("next", "")
+    code = request.form.get("code", "")
+    with deps.committing() as session:
+        user = session.get(User, pending)
+        if user is None or not mfa.verify_for_user(session, user, code):
+            return render_template(
+                "auth/mfa.html",
+                error="That code did not match. Codes expire after 30 seconds.",
+                next=target,
+            ), 401
+        membership = user.memberships[0] if user.memberships else None
+        if membership is None:
+            return render_template(
+                "auth/mfa.html",
+                error="This account is not a member of any organisation.",
+                next=target,
+            ), 403
+        organization_id = membership.organization_id
+        remaining = mfa.remaining_recovery_codes(user)
+        accounts.audit(
+            session,
+            organization_id=organization_id,
+            action="auth.mfa_verified",
+            actor_id=user.id,
+            actor_label=user.email,
+            summary="completed the second factor",
+            detail={"recovery_codes_left": remaining},
+        )
+
+    deps.sign_in(user, organization_id)
+    if target.startswith("/") and not target.startswith("//"):
+        return redirect(target)
     return redirect(url_for("main.projects_list"))

@@ -60,6 +60,43 @@ Everything is read from the environment with a `MASSINGPLAN_` prefix.
 | `WEB_TIMEOUT` | `120` | A 2,000-iteration Monte Carlo is CPU-bound and slow on purpose |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Your load balancer's address. `*` lets any client spoof the address the audit log records |
 | `MASSINGPLAN_RATE_LIMIT` | `1` | `0` disables the in-app limiter |
+| `MASSINGPLAN_ENCRYPTION_KEY` | *(unset)* | Required for two-factor auth. Deliberately **not** `SECRET_KEY` — see below |
+
+## Two-factor authentication
+
+Off unless two things are true: the extra is installed and a key is set.
+
+```bash
+pip install 'massingplan[mfa]'
+massingplan gen-key            # prints a Fernet key
+```
+
+```bash
+export MASSINGPLAN_ENCRYPTION_KEY='<the key>'
+```
+
+Users then turn it on per account from **Account → Two-factor authentication**.
+Without both, the page says so rather than offering a switch that does nothing.
+
+**The key is separate from `MASSINGPLAN_SECRET_KEY` on purpose.** Rotating the
+session key signs everyone out and should be cheap enough to do on a hunch.
+Rotating this one requires re-encrypting every stored secret, and doing it
+without that step leaves every enrolled user unable to sign in — the app reports
+`a stored value could not be decrypted` rather than pretending the code is
+wrong, but the users are still locked out.
+
+**Back the key up separately from the database.** That is the whole point: a
+leaked dump without the key contains no usable TOTP secrets. A key stored beside
+the dump gives that up.
+
+**Migration `0003_mfa` is not reversibly safe.** `downgrade` drops the columns,
+which discards every enrolled secret; an upgrade afterwards leaves those users
+holding an authenticator entry for a secret the server no longer has. Recovery
+is an administrator clearing their enrolment, not a re-upgrade.
+
+**What it does not cover.** API keys bypass the second factor by design — a CI
+job cannot type a code. Scope those keys and rotate them; the factor protects
+the interactive session, not the machine credential.
 
 ## Migrations
 

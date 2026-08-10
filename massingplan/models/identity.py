@@ -109,6 +109,24 @@ class User(Base, TimestampMixin):
     failed_sign_ins: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # -- second factor -----------------------------------------------------
+    #: Encrypted, not hashed: verification needs the secret back. Encrypted
+    #: rather than plain because a leaked backup would otherwise hand over a
+    #: second factor the attacker can compute -- and the key lives in the
+    #: environment, so it does not travel with the dump.
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Hashes. Storing recovery codes readably makes the list a second copy of
+    #: the second factor.
+    mfa_recovery_hashes: Mapped[list] = mapped_column(JSON, default=list)
+    mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The last code accepted, and when. Without these a captured code is
+    #: replayable for the ninety seconds its window stays open, which is longer
+    #: than an attacker needs.
+    mfa_last_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    mfa_last_code_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )

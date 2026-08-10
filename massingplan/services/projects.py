@@ -239,7 +239,7 @@ def compare_to_baseline(
 
 
 def summary(project: Project, outcome: ScheduleOutcome) -> dict[str, Any]:
-    """The headline a project card shows."""
+    """The headline a project card shows, from a freshly computed schedule."""
     baseline = project.current_baseline
     slip = None
     if baseline and baseline.project_finish:
@@ -258,4 +258,40 @@ def summary(project: Project, outcome: ScheduleOutcome) -> dict[str, Any]:
         # Signed days against the current baseline, or None when there is no
         # baseline -- which is different from "on time" and must not render as 0.
         "slip_days": slip,
+        "stale": False,
+    }
+
+
+def stored_summary(project: Project) -> dict[str, Any]:
+    """The same headline, read from the denormalised columns. No CPM run.
+
+    This is what the columns were denormalised *for*. Rescheduling every project
+    to render a list means a full forward and backward pass, plus a write-back,
+    per row -- on fifty projects that is fifty CPM runs and fifty transactions
+    to draw a table nobody has clicked into yet, and it degrades linearly with
+    the thing a growing customer has more of.
+
+    `stale` is true when a project has never been scheduled, so the page can say
+    "not computed yet" rather than printing a blank date that reads as a bug.
+    """
+    dates = [a.computed_finish for a in project.activities if a.computed_finish]
+    starts = [a.computed_start for a in project.activities if a.computed_start]
+    baseline = project.current_baseline
+    finish = max(dates) if dates else None
+    slip = None
+    if baseline and baseline.project_finish and finish:
+        slip = (finish - baseline.project_finish).days
+    return {
+        "id": project.id,
+        "code": project.code,
+        "name": project.name,
+        "data_date": project.data_date.isoformat() if project.data_date else None,
+        "project_start": min(starts).isoformat() if starts else None,
+        "project_finish": finish.isoformat() if finish else None,
+        "duration_working_days": None,
+        "activity_count": len(project.activities),
+        "critical_count": sum(1 for a in project.activities if a.is_critical),
+        "baseline": baseline.name if baseline else None,
+        "slip_days": slip,
+        "stale": not dates,
     }

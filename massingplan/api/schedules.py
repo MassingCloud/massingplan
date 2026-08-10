@@ -147,6 +147,7 @@ def chart_rows(
     outcome: Any,
     links: Sequence[Any],
     labels: Mapping[str, tuple[str, str]] | None = None,
+    kinds: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """`to_rows()` plus the two things a chart needs and persistence does not.
 
@@ -173,6 +174,13 @@ def chart_rows(
     All three are added here rather than inside `to_rows()`, whose key set is
     frozen by test on purpose.
 
+    **`kind`.** A milestone is a point in time, but a *finish* milestone dated
+    the same day its predecessor ends belongs at the end of that day, not its
+    start -- the predecessor's bar occupies the whole day. Without the kind the
+    renderer cannot tell the two apart and draws the arrow into it backwards by
+    one day-width. `to_rows()` does not carry the kind because persistence keeps
+    it on the activity row, so it is supplied here.
+
     `links` is required, deliberately. It defaulted to `()` for one commit, and
     a default that yields "no relationships" is the arrows bug waiting to be
     reintroduced by a caller who simply forgets an argument. Forgetting it is
@@ -189,6 +197,7 @@ def chart_rows(
         )
 
     known = dict(labels or {})
+    known_kinds = dict(kinds or {})
     rows = []
     for row in outcome.to_rows():
         activity_id = str(row["activity_id"])
@@ -198,6 +207,7 @@ def chart_rows(
                 **row,
                 "code": code or activity_id,
                 "name": name,
+                "kind": known_kinds.get(activity_id, "task"),
                 "predecessors": incoming.get(activity_id, []),
             }
         )
@@ -225,7 +235,7 @@ def schedule_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     return {
         **outcome.summary(),
-        "activities": chart_rows(outcome, links),
+        "activities": chart_rows(outcome, links, kinds={t.id: t.kind.value for t in tasks}),
         "violations": [v.to_dict() for v in outcome.violations],  # type: ignore[attr-defined]
         "issues": [i.to_dict() for i in outcome.issues],
     }
@@ -474,11 +484,18 @@ def import_file(content: str, *, filename: str = "") -> dict[str, Any]:
             detail=problems[:20],
         )
 
-    from ..core.schedule import schedule as run
+    from ..core.schedule import schedule_with_network
 
-    outcome = run(schedule)
-    _tasks, links, _cals = schedule.to_network()
-    rows = chart_rows(outcome, links, {a.id: (a.code, a.name) for a in schedule.activities})
+    # `schedule_with_network` hands back the network it already built. Calling
+    # `schedule()` and then `to_network()` converted every activity and
+    # relationship twice to serve one response.
+    outcome, net_tasks, links, _cals = schedule_with_network(schedule)
+    rows = chart_rows(
+        outcome,
+        links,
+        {a.id: (a.code, a.name) for a in schedule.activities},
+        {t.id: t.kind.value for t in net_tasks},
+    )
 
     return {
         "source": schedule.summary(),

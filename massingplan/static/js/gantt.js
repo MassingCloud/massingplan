@@ -42,6 +42,7 @@
    * @property {boolean} is_longest_path
    * @property {boolean} constraint_satisfied
    * @property {string} status
+   * @property {string} kind          `task`, `start_milestone`, `finish_milestone`, ...
    * @property {Predecessor[]} predecessors  The arrows are drawn from this.
    */
 
@@ -209,6 +210,12 @@
       var x = LEFT + s * dayW;
       var w = Math.max(dayW * 0.6, (f - s + 1) * dayW);
       var milestone = row.duration_days === 0;
+      // A *finish* milestone belongs at the end of its day, not the start.
+      // Its predecessor's bar occupies that whole day, so drawing the diamond
+      // at the day's start put it one day-width left of the bar it marks and
+      // the arrow into it ran backwards. A start milestone stays at the front
+      // of its day, which is where the work it releases begins.
+      var atDayEnd = milestone && row.kind === "finish_milestone";
 
       // The planner's own code, not the internal id -- on a stored project
       // that id is 32 hex characters and means nothing to the reader.
@@ -238,7 +245,8 @@
 
       var shape;
       if (milestone) {
-        var cx = x, cy = y + BAR_H / 2;
+        var cx = atDayEnd ? x + dayW : x;
+        var cy = y + BAR_H / 2;
         shape = el("path", {
           d: "M" + cx + "," + (cy - 7) + " L" + (cx + 7) + "," + cy +
              " L" + cx + "," + (cy + 7) + " L" + (cx - 7) + "," + cy + " Z",
@@ -260,7 +268,11 @@
       // diamond, and an arrow to a successor starting that same day then ran
       // backwards -- 2px at this zoom, 40px zoomed in.
       geometry[row.activity_id] = {
-        x: x, w: milestone ? 0 : w, y: y, mid: y + BAR_H / 2, critical: row.is_longest_path
+        x: atDayEnd ? x + dayW : x,
+        w: milestone ? 0 : w,
+        y: y,
+        mid: y + BAR_H / 2,
+        critical: row.is_longest_path
       };
     });
 

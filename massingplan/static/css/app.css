@@ -157,3 +157,23 @@ button:hover { filter: brightness(1.08); }
    is looking for, not the colour. */
 .qr { display: inline-block; background: #fff; padding: 0.6rem; border-radius: 6px; margin: 0.75rem 0; }
 .qr svg { display: block; width: 11rem; height: 11rem; }
+/* -- line of balance ------------------------------------------------------
+   Location up the page, time across it. Six line colours cycled by index --
+   enough for the trades on one flow, and distinguishable without relying on
+   hue alone (each also carries its label at the start of the line). */
+.lob-host { display: block; margin: 1rem 0; overflow-x: auto; }
+.lob-band { fill: color-mix(in srgb, var(--muted) 7%, transparent); }
+.lob-location { font-size: 0.72rem; fill: var(--muted); }
+.lob-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.lob-node { stroke-width: 1; }
+.lob-label { font-size: 0.7rem; font-weight: 600; stroke: none; }
+.lob-line-0, text.lob-line-0 { stroke: #2f6f4f; fill: #2f6f4f; }
+.lob-line-1, text.lob-line-1 { stroke: #8a5a2b; fill: #8a5a2b; }
+.lob-line-2, text.lob-line-2 { stroke: #2b5d8a; fill: #2b5d8a; }
+.lob-line-3, text.lob-line-3 { stroke: #7a2b6f; fill: #7a2b6f; }
+.lob-line-4, text.lob-line-4 { stroke: #8a2b2b; fill: #8a2b2b; }
+.lob-line-5, text.lob-line-5 { stroke: #4a4a4a; fill: #4a4a4a; }
+/* The binding location: where the buffer is fully consumed. Marked because it
+   is the one actionable output -- "tight on level 7" beats "3 days of float". */
+.lob-bind { fill: color-mix(in srgb, var(--accent) 35%, transparent); }
+.lob-bind-overlap { fill: color-mix(in srgb, var(--critical) 55%, transparent); }

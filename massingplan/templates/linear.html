@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Line of balance — massingplan{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p class="lede">
+  Where every crew is, and where they close on each other. A Gantt answers
+  <em>when</em>; this answers <em>where</em> — and two trades converging on the
+  same floor is invisible on a bar chart, because the two bars simply sit next
+  to each other and look fine.
+</p>
+
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Duration</span>
+    <span class="tile-value">{{ linear.duration_working_days }}</span>
+    <span class="tile-sub">working days</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Trades</span>
+    <span class="tile-value">{{ trades | length }}</span>
+    <span class="tile-sub">flowing through {{ locations | length }} locations</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Continuity cost</span>
+    <span class="tile-value">{{ linear.continuity_cost_days.values() | sum }}</span>
+    <span class="tile-sub">crew-days of float given up</span>
+  </div>
+</section>
+
+<section>
+  <h2>Line of balance</h2>
+  <p class="note">
+    Time runs left to right, location up the page in flow order. Each trade is
+    one line; its <strong>slope is the production rate</strong>, so a steep line
+    is a slow trade. Lines that converge are crews running out of room between
+    them. The marker on a line is the <strong>binding location</strong> — the
+    one place the buffer is fully consumed, and therefore where a slip is felt
+    first.
+  </p>
+  <div class="lob-host"
+       data-segments="{{ linear.segments | tojson | forceescape }}"
+       data-interferences="{{ linear.interferences | tojson | forceescape }}"></div>
+</section>
+
+<section>
+  <h2>Where the trades come closest</h2>
+  {% if linear.interferences %}
+  <table class="checks">
+    <thead>
+      <tr><th>Handover</th><th>Binding location</th><th>Clearance</th><th>Reading</th></tr>
+    </thead>
+    <tbody>
+      {% for hit in linear.interferences %}
+      <tr class="{{ 'status-fail' if hit.gap_days < 0 else '' }}">
+        <td>{{ hit.predecessor_id }} → {{ hit.successor_id }}</td>
+        <td><strong>{{ hit.location_id }}</strong></td>
+        <td>
+          {% if hit.gap_days < 0 %}
+          <span class="pill pill-fail">{{ hit.gap_days }}d</span>
+          {% else %}{{ hit.gap_days }}d{% endif %}
+        </td>
+        <td class="muted">
+          {% if hit.gap_days < 0 %}
+            The two trades share the space here.
+          {% elif hit.converging %}
+            {{ hit.successor_id }} is the faster trade and is closing — a slip in
+            {{ hit.predecessor_id }} is felt at the far end immediately.
+          {% else %}
+            {{ hit.successor_id }} loses ground as it goes, so the gap only widens.
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">A single trade has nobody to interfere with.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>The price of continuity</h2>
+  <p class="note">
+    How much later each crew had to start so it would <em>not</em> be
+    fragmented. CPM would start each of these at its earliest date, which means
+    working a floor, waiting, working a floor, waiting — and a subcontractor
+    cannot be demobilised eleven times. These are the days of float given up to
+    keep one gang on site continuously. It is a trade, and the planner should be
+    the one making it.
+  </p>
+  <table class="checks">
+    <thead><tr><th>Trade</th><th>Continuity cost</th></tr></thead>
+    <tbody>
+      {% for task_id, days in linear.continuity_cost_days.items() %}
+      <tr>
+        <td>{{ task_id }}</td>
+        <td>{% if days %}{{ days }} days{% else %}<span class="muted">none</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if linear.issues %}
+<section>
+  <h2>Issues <span class="muted">({{ linear.issues | length }})</span></h2>
+  <table class="checks">
+    <thead><tr><th>Severity</th><th>Code</th><th>What</th><th>What was done</th></tr></thead>
+    <tbody>
+      {% for issue in linear.issues %}
+      <tr>
+        <td><span class="pill pill-{{ 'fail' if issue.severity == 'error' else 'warn' }}">{{ issue.severity }}</span></td>
+        <td><code>{{ issue.code }}</code></td>
+        <td>{{ issue.message }}</td>
+        <td class="muted">{{ issue.action }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section>
+  <h2>It is an ordinary network</h2>
+  <p class="note">
+    Location-based scheduling here is a way of <em>generating</em> activities and
+    logic, not a second scheduler with its own answer. This flow emits
+    {{ linear.activities | length }} activities — one per trade per location, a
+    crew chain, handover links carrying the buffer as lag — and the ordinary
+    engine schedules them to exactly these dates. Everything downstream (DCMA,
+    risk, levelling, baseline comparison) works on it unchanged.
+  </p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lob.js') }}"></script>
+{% endblock %}

@@ -28,10 +28,18 @@ from massingplan.config import Settings
 GANTT = Path(__file__).resolve().parent.parent / "massingplan" / "static" / "js" / "gantt.js"
 SOURCE = GANTT.read_text(encoding="utf-8")
 
-#: The same file with comments removed. Several of these tests search for a
-#: pattern that must not appear in the *code*, and the comments explaining why
-#: it must not appear obviously contain it.
-CODE = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", SOURCE, flags=re.S))
+
+def _strip_comments(source: str) -> str:
+    """Source with comments removed.
+
+    Several of these tests search for a pattern that must not appear in the
+    *code*, and the comment explaining why it must not appear obviously
+    contains it.
+    """
+    return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", source, flags=re.S))
+
+
+CODE = _strip_comments(SOURCE)
 
 
 @pytest.fixture
@@ -126,18 +134,28 @@ def test_each_predecessor_carries_its_type_and_lag(client) -> None:  # type: ign
     )
 
 
+def test_a_finish_milestone_is_drawn_at_the_end_of_its_day(client) -> None:  # type: ignore[no-untyped-def]
+    """The last backwards arrow on the demo page.
+
+    A finish milestone dated the same day its predecessor ends sat one
+    day-width left of that bar's right edge, because the bar occupies the whole
+    day and the milestone was drawn at its start. The arrow into it therefore
+    ran backwards. Distinguishing the two milestone kinds needs `kind` in the
+    payload, which is why `chart_rows` now carries it.
+    """
+    assert "kind" in _chart_data(client)[0]
+    assert 'row.kind === "finish_milestone"' in CODE
+    assert "atDayEnd ? x + dayW : x" in CODE
+
+
 def test_a_milestone_has_no_width_in_the_geometry_map() -> None:
     """A milestone is a point in time, and giving it the bar width put its
     outgoing anchor a full day to the right of the diamond. An arrow to a
     successor starting that same day then ran backwards -- two pixels zoomed
     out, forty pixels zoomed in.
 
-    Known limitation, deliberately not papered over: a *finish* milestone dated
-    the same day its predecessor finishes still sits one day-width left of that
-    bar's right edge, because the bar occupies the whole day and the milestone
-    is a point at the day's start. Telling the two milestone kinds apart needs
-    `kind` in the payload, which `to_rows()` does not carry. It renders as a
-    short hook rather than a backwards arrow, which is the conventional drawing.
+    The finish-milestone case that this left behind is handled by
+    `test_a_finish_milestone_is_drawn_at_the_end_of_its_day`.
     """
     assert "milestone ? 0 : w" in CODE
 
@@ -224,3 +242,99 @@ def test_the_type_checker_is_configured_and_wired_into_ci() -> None:
 
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "jsconfig.json" in ci, "nothing type-checks the JavaScript in CI"
+
+
+# -- the line-of-balance chart ---------------------------------------------
+
+LOB = Path(__file__).resolve().parent.parent / "massingplan" / "static" / "js" / "lob.js"
+LOB_SOURCE = LOB.read_text(encoding="utf-8")
+LOB_CODE = _strip_comments(LOB_SOURCE)
+
+
+def _lob_data(client, attribute: str) -> list[dict]:  # type: ignore[no-untyped-def]
+    html = client.get("/linear").get_data(as_text=True)
+    match = re.search(rf'data-{attribute}="([^"]*)"', html)
+    assert match, f"the linear page has no data-{attribute}"
+    return json.loads(unescape(match.group(1)))
+
+
+def test_the_linear_page_renders(client) -> None:  # type: ignore[no-untyped-def]
+    assert client.get("/linear").status_code == 200
+
+
+def test_every_segment_property_the_renderer_declares_is_sent(client) -> None:  # type: ignore[no-untyped-def]
+    """Same contract check as the Gantt, for the same reason: the half nobody
+    writes down is the half that goes missing.
+    """
+    block = re.search(r"@typedef \{object\} Segment\b(.*?)\*/", LOB_SOURCE, re.S)
+    assert block, "the Segment typedef is gone"
+    declared = set(re.findall(r"@property \{[^}]+\} (\w+)", block.group(1)))
+    sent = set(_lob_data(client, "segments")[0])
+    assert not declared - sent, f"declared but not sent: {sorted(declared - sent)}"
+
+
+def test_every_interference_property_the_renderer_declares_is_sent(client) -> None:  # type: ignore[no-untyped-def]
+    block = re.search(r"@typedef \{object\} Interference\b(.*?)\*/", LOB_SOURCE, re.S)
+    assert block, "the Interference typedef is gone"
+    declared = set(re.findall(r"@property \{[^}]+\} (\w+)", block.group(1)))
+    sent = set(_lob_data(client, "interferences")[0])
+    assert not declared - sent, f"declared but not sent: {sorted(declared - sent)}"
+
+
+def test_the_demo_shows_a_converging_handover(client) -> None:  # type: ignore[no-untyped-def]
+    """The chart exists to show one thing: a faster trade closing on a slower
+    one, held back by the *top* location rather than the bottom. A demo that
+    happens not to contain that case is a demo of nothing in particular.
+    """
+    hits = _lob_data(client, "interferences")
+    converging = [h for h in hits if h["converging"]]
+    assert converging, f"no handover converges in the demo: {hits}"
+
+    segments = _lob_data(client, "segments")
+    locations = []
+    for segment in segments:
+        if segment["location_id"] not in locations:
+            locations.append(segment["location_id"])
+    for hit in converging:
+        assert hit["location_id"] == locations[-1], (
+            "a converging handover must bind at the last location -- that is "
+            "what 'the successor is catching up' means"
+        )
+
+
+def test_the_renderer_keeps_the_payload_location_order(client) -> None:  # type: ignore[no-untyped-def]
+    """Sorting the ids would put `Level 10` before `Level 2`, and a
+    line-of-balance chart with its floors out of order is worse than none.
+    """
+    assert "indexOf(s.location_id) === -1" in LOB_CODE
+    assert "sort(" not in LOB_CODE
+
+
+def test_location_runs_up_the_page() -> None:
+    """A trade climbing a building must climb the chart. Drawing the first
+    location at the top would have every line descending, which reads as the
+    opposite of what the crew is doing.
+    """
+    assert "locations.length - 1 - index" in LOB_CODE
+
+
+def test_the_lob_chart_pulls_nothing_from_the_network() -> None:
+    urls = re.findall(r"https?://[^\s\"')]+", LOB_SOURCE)
+    assert urls == ["http://www.w3.org/2000/svg"], urls
+    for forbidden in ("fetch(", "XMLHttpRequest", "import(", "eval(", "new Function"):
+        assert forbidden not in LOB_CODE, forbidden
+
+
+def test_the_lob_script_is_type_checked_too() -> None:
+    """`jsconfig.json` includes the whole js directory, so a second renderer is
+    covered without anybody remembering to add it.
+    """
+    config = json.loads(
+        re.sub(
+            r'^\s*"//":\s*\[.*?\],\s*$',
+            "",
+            (Path(__file__).resolve().parent.parent / "jsconfig.json").read_text(),
+            flags=re.S | re.M,
+        )
+    )
+    assert config["include"] == ["massingplan/static/js/**/*.js"]

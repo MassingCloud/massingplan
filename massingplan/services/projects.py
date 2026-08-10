@@ -93,11 +93,14 @@ def import_schedule(
     return project, outcome, job
 
 
-def reschedule(session: Session, project: Project) -> ScheduleOutcome:
-    """Run the engine and store the answer.
+def reschedule_with_links(session: Session, project: Project) -> tuple[ScheduleOutcome, list[Any]]:
+    """Run the engine, store the answer, and hand back the links it used.
 
-    Always both. A schedule computed and not written back is why a Gantt page
-    ends up recalculating on every render, and why two pages can disagree.
+    The project page needs both: the outcome for the dates and the links to draw
+    dependency arrows. Calling `reschedule()` and then `repo.to_network()` again
+    rebuilt every Task, Link and WorkCalendar a second time per page view -- on
+    a two-thousand-activity project, a full second conversion of data already in
+    hand.
     """
     tasks, links, calendars, options = repo.to_network(project)
     if not tasks:
@@ -106,6 +109,16 @@ def reschedule(session: Session, project: Project) -> ScheduleOutcome:
         tasks, links, calendars, data_date=project.data_date, options=options
     )
     repo.write_back(session, project, outcome)
+    return outcome, list(links)
+
+
+def reschedule(session: Session, project: Project) -> ScheduleOutcome:
+    """Run the engine and store the answer.
+
+    Always both. A schedule computed and not written back is why a Gantt page
+    ends up recalculating on every render, and why two pages can disagree.
+    """
+    outcome, _links = reschedule_with_links(session, project)
     return outcome
 
 

@@ -54,6 +54,26 @@ def demo() -> Any:
     )
 
 
+@bp.get("/linear")
+def linear() -> Any:
+    """A worked location-based schedule, with no sign-in and nothing stored.
+
+    Seeded from code, like `/demo`, because locations are not persisted yet --
+    the engine and the JSON API exist and the storage does not. A page that
+    implied otherwise would be the third claim this repo has had to walk back.
+    """
+    from ..services.demo import linear_demo_payload
+
+    payload = linear_demo_payload()
+    return render_template(
+        "linear.html",
+        title="Line of balance — eight floors, five trades",
+        linear=schedules.schedule_linear(payload),
+        trades=payload["tasks"],
+        locations=payload["locations"],
+    )
+
+
 # -- projects --------------------------------------------------------------
 
 
@@ -78,7 +98,10 @@ def projects_list() -> Any:
 @deps.login_required
 def project_detail(project_id: str) -> Any:
     project = deps.load_project(project_id)
-    outcome = projects.reschedule(deps.db(), project)
+    # One network build for the page. `reschedule` used to be followed by a
+    # second `repo.to_network()` inside `_rows_with_codes`, converting every
+    # activity and relationship twice per view.
+    outcome, links = projects.reschedule_with_links(deps.db(), project)
     deps.db().commit()
 
     comparison = None
@@ -91,7 +114,7 @@ def project_detail(project_id: str) -> Any:
     return render_template(
         "workspace.html",
         title=f"{project.code} — {project.name}",
-        schedule={**outcome.summary(), "activities": _rows_with_codes(project, outcome)},
+        schedule={**outcome.summary(), "activities": _rows_with_codes(project, outcome, links)},
         health=projects.assess(deps.db(), project, outcome),
         project=project,
         baselines=project.baselines,
@@ -101,16 +124,21 @@ def project_detail(project_id: str) -> Any:
     )
 
 
-def _rows_with_codes(project: Any, outcome: Any) -> list[dict[str, Any]]:
+def _rows_with_codes(project: Any, outcome: Any, links: list[Any]) -> list[dict[str, Any]]:
     """Rows labelled with the planner's code, and carrying their predecessors.
 
     Both come from `schedules.chart_rows`, which is the one place that decorates
     a row for display. This function used to do half of it inline and omit the
     relationships entirely, which is why the Gantt drew no dependency arrows.
+
+    `links` is passed in rather than rebuilt: the caller already has them from
+    the schedule run.
     """
-    _tasks, links, _cals, _options = repo.to_network(project)
     return schedules.chart_rows(
-        outcome, links, {a.id: (a.code, a.name) for a in project.activities}
+        outcome,
+        links,
+        {a.id: (a.code, a.name) for a in project.activities},
+        {a.id: a.kind.value for a in project.activities},
     )
 
 

@@ -563,7 +563,7 @@ def test_a_path_traversal_filename_does_not_escape(app) -> None:  # type: ignore
     assert response.status_code in (302, 400, 415, 422)
 
 
-def test_an_upload_over_the_limit_is_refused_not_buffered(app) -> None:  # type: ignore[no-untyped-def]
+def test_an_upload_over_the_limit_is_refused_not_buffered() -> None:
     """Refused on the declared length, before the body is read.
 
     The first version of this test sent a real 16MB body to prove the point,

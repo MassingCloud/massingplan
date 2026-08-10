@@ -115,6 +115,13 @@ credential.
 `pg_dump` the database. There is nothing else: uploads are parsed and stored as
 rows, not kept as files, so the database is the whole state.
 
+**On SQLite, the database is three files.** WAL mode is on, so committed data
+lives in `massingplan.db-wal` until a checkpoint. Copying only `massingplan.db`
+gives you a backup that is silently missing recent writes — and deleting only
+`massingplan.db` leaves a `-wal` that resurrects the state you thought you had
+removed. Use `sqlite3 massingplan.db ".backup out.db"`, or stop the app and copy
+all three.
+
 Verify a restore, not just a dump. To check a restored copy is a working
 system rather than a working file:
 

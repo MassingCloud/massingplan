@@ -37,7 +37,9 @@ What is checked, and why each one:
    reading `SA-0001` as `SA` with a lag of minus one.
 4. Float is numeric for every activity, including completed ones. `px.optimize`
    does `0 < total_float <= 5` and a `None` there is a TypeError in production.
-5. A cyclic network refuses rather than inventing dates.
+5. A cyclic network refuses rather than inventing dates -- and does not crash
+   the optimiser doing it. `compute()` has three exits and a coercion applied
+   to one is a coercion missing from the others.
 6. `TASKPRED` is read on XER import -- the defect the whole adoption exists for.
 """
 
@@ -251,6 +253,46 @@ def a_cycle_refuses_rather_than_inventing_dates() -> None:
     assert all(r["start_date"] is None for r in result["activities"])
 
 
+def a_cycle_does_not_crash_the_optimiser() -> None:
+    """`px.optimize` filters `0 < x["total_float"] <= 5` and only checks
+    `has_cycle` *after* that comparison, so a cyclic schedule reaches it. With
+    `total_float: None` it raised TypeError -- a crash in a route rather than a
+    clean refusal.
+
+    Position keys stay `None` here, because a 0 there would draw a Gantt of
+    every activity stacked on day zero. Float is a filter key, not a position
+    key, so a number is safe and a `None` is not.
+    """
+    records = [
+        _record("id0", "SA-0001", 5, "SA-0002"),
+        _record("id1", "SA-0002", 5, "SA-0001"),
+    ]
+    rows = schedule_cpm.compute(records)["activities"]
+    near_critical = [r for r in rows if 0 < r["total_float"] <= 5]
+    assert near_critical == [], near_critical
+
+
+def every_exit_agrees_on_the_row_shape() -> None:
+    """`compute()` has three exits -- normal, empty and cyclic -- and a coercion
+    applied to one is a coercion missing from the others. The float fix landed
+    on the computed exit only the first time.
+    """
+    computed = schedule_cpm.compute(_chain([3, 4]))["activities"]
+    cyclic = schedule_cpm.compute(
+        [
+            _record("id0", "SA-0001", 5, "SA-0002"),
+            _record("id1", "SA-0002", 5, "SA-0001"),
+        ]
+    )["activities"]
+    assert set(computed[0]) == set(cyclic[0]), (
+        f"the exits disagree on keys: {set(computed[0]) ^ set(cyclic[0])}"
+    )
+    for label, rows in (("computed", computed), ("cyclic", cyclic)):
+        for row in rows:
+            for key in ("duration", "total_float", "free_float"):
+                assert isinstance(row[key], int), f"{label}: {key} is {row[key]!r}"
+
+
 # -- 6. TASKPRED is read ---------------------------------------------------
 
 XER_WITH_LOGIC = (
@@ -316,6 +358,8 @@ CHECKS = [
     ("float is numeric even when complete", float_is_numeric_even_when_complete),
     ("negative float is not clamped", negative_float_is_not_clamped),
     ("a cycle refuses rather than inventing dates", a_cycle_refuses_rather_than_inventing_dates),
+    ("a cycle does not crash the optimiser", a_cycle_does_not_crash_the_optimiser),
+    ("every exit agrees on the row shape", every_exit_agrees_on_the_row_shape),
     ("TASKPRED is read on import", taskpred_is_read_on_import),
     (
         "an imported schedule is not entirely critical",

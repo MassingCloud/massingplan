@@ -88,7 +88,8 @@ def test_the_conformance_gate_passes_in_the_consumers_shape(consumer: Path) -> N
         f"the kit's own gate failed in a clean consumer\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
-    assert "all 11 checks passed" in result.stdout, result.stdout
+    assert "checks passed" in result.stdout, result.stdout
+    assert " FAIL " not in result.stdout and " ERROR " not in result.stdout, result.stdout
 
 
 def test_the_gate_needs_no_pytest(consumer: Path) -> None:

@@ -64,16 +64,8 @@ def compute(activities: list[dict], *, data_date: date | None = None) -> dict[st
 
 
 def _empty() -> dict[str, Any]:
-    return {
-        "project_duration": 0,
-        "activity_count": 0,
-        "critical_count": 0,
-        "has_cycle": False,
-        "activities": [],
-        "critical_path": [],
-        "cycle": [],
-        "issues": [],
-    }
+    """No activities. Every key present, so a caller need not special-case it."""
+    return schedule_engine.blank_result()
 
 
 def _cyclic(tasks: list, activities: list[dict], issues: Any, cycle: list[str]) -> dict[str, Any]:
@@ -84,44 +76,28 @@ def _cyclic(tasks: list, activities: list[dict], issues: Any, cycle: list[str]) 
     EVM and the delay analysis exactly as if they meant something.
 
     Callers still get every activity, so anything that counts or lists them is
-    unaffected, but every computed field is `None` rather than a fabricated
-    value. A caller that renders `None` shows a gap; a caller that rendered the
-    old numbers showed a schedule.
+    unaffected, and every *position* field -- dates and day offsets -- is `None`
+    rather than a fabricated value. A caller that renders `None` shows a gap; a
+    caller that rendered the old numbers showed a schedule.
+
+    **`total_float` and `free_float` stay numeric even here**, and that is not
+    an inconsistency. They are filter keys: `px.optimize` does
+    `0 < x["total_float"] <= 5` without checking, so `None` turns a refusal into
+    a TypeError in a route -- a crash rather than a clean "this schedule has a
+    loop". The first version of this fix coerced the float only on the computed
+    exit and left this one raising, which is the same defect one exit further
+    along.
+
+    The rows come from `schedule_engine.blank_row`, which the computed exit also
+    builds from, so the two cannot drift.
     """
     refs = {r["id"]: r.get("ref") for r in activities}
-    rows = [
-        {
-            "id": t.id,
-            "ref": refs.get(t.id),
-            "name": t.name,
-            "duration": t.duration_days,
-            "es": None,
-            "ef": None,
-            "ls": None,
-            "lf": None,
-            "total_float": None,
-            "free_float": None,
-            "critical": False,
-            "predecessors": [],
-            "start_date": None,
-            "finish_date": None,
-            "late_start_date": None,
-            "late_finish_date": None,
-            "calendar": t.calendar_id,
-            "status": "not_started",
-            "remaining_days": t.duration_days,
-            "on_driving_path": False,
-            "constraint_satisfied": True,
-        }
-        for t in tasks
-    ]
+    rows = [schedule_engine.blank_row(t, refs.get(t.id)) for t in tasks]
     return {
-        "project_duration": 0,
+        **schedule_engine.blank_result(),
         "activity_count": len(rows),
-        "critical_count": 0,
         "has_cycle": True,
         "activities": rows,
-        "critical_path": [],
         "cycle": cycle,
         "issues": [
             *[i.to_dict() for i in issues],

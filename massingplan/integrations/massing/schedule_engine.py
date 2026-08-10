@@ -318,6 +318,105 @@ def data_date_for(records: list[dict], fallback: date | None = None) -> date:
     return fallback or date.today()
 
 
+#: Keys a caller may do arithmetic on without checking, on **every** exit of
+#: `compute()` -- the normal one, the empty one and the cyclic one.
+#:
+#: The split matters and is not arbitrary. `total_float` is a *filter* key:
+#: every consumer compares it against a threshold (`0 < tf <= 5` in
+#: `px.optimize`), and a completed or unschedulable activity reporting 0 falls
+#: outside every "watch this one" filter, which is the right answer. The date
+#: and offset keys are *position* keys: 0 there would put every activity on day
+#: zero and draw a Gantt of two hundred bars stacked at the origin, which is
+#: fabricating a schedule -- the exact thing the cyclic refusal exists to
+#: prevent.
+#:
+#: So: numeric where a number is safe, `None` where a number would be a lie.
+NUMERIC_ROW_KEYS = ("duration", "total_float", "free_float")
+
+#: Keys that are `None` when there is no computed schedule. A caller that
+#: renders `None` shows a gap; a caller that renders a fabricated 0 shows a
+#: schedule.
+NULLABLE_ROW_KEYS = (
+    "es",
+    "ef",
+    "ls",
+    "lf",
+    "start_date",
+    "finish_date",
+    "late_start_date",
+    "late_finish_date",
+    "total_float_days",
+    "free_float_days",
+)
+
+
+def blank_result() -> dict[str, Any]:
+    """The top-level envelope every exit of `compute()` fills in.
+
+    Same argument as `blank_row`, one level up. The three exits disagreed here
+    too: `cycle` existed only on the cyclic and empty exits, so a caller reading
+    `cpm["cycle"]` on a normal schedule got a KeyError, and the five date and
+    driving-path keys existed only on the computed one. Both are the sort of
+    break that shows up the first time somebody draws a loop, in code that has
+    worked for a year.
+    """
+    return {
+        "project_duration": 0,
+        "activity_count": 0,
+        "critical_count": 0,
+        "has_cycle": False,
+        "activities": [],
+        "critical_path": [],
+        "cycle": [],
+        "issues": [],
+        # Additive keys. Present everywhere, `None` where there is nothing to
+        # say, so `in` and `[...]` behave the same on every exit.
+        "data_date": None,
+        "project_start_date": None,
+        "project_finish_date": None,
+        "driving_path": [],
+        "violations": [],
+    }
+
+
+def blank_row(task: Task, ref: str | None) -> dict[str, Any]:
+    """One activity with **no computed schedule** — the cyclic and empty exits.
+
+    Every legacy row is built from this, including the computed one, so the key
+    sets cannot drift between exits and a coercion applied in one place cannot
+    be missing from another. That is not hypothetical: the float coercion
+    originally landed on the computed exit only, and a cyclic network then
+    crashed `px.optimize` on `0 < None` instead of refusing.
+    """
+    return {
+        "id": task.id,
+        "ref": ref,
+        "name": task.name,
+        "duration": task.duration_days,
+        "es": None,
+        "ef": None,
+        "ls": None,
+        "lf": None,
+        # Numeric even here. See NUMERIC_ROW_KEYS.
+        "total_float": 0,
+        "free_float": 0,
+        "total_float_days": None,
+        "free_float_days": None,
+        "has_float": False,
+        "critical": False,
+        "predecessors": [],
+        "start_date": None,
+        "finish_date": None,
+        "late_start_date": None,
+        "late_finish_date": None,
+        "calendar": task.calendar_id,
+        "status": "not_started",
+        "remaining_days": task.duration_days,
+        "on_driving_path": False,
+        "constraint_satisfied": True,
+    }
+
+
 def _numeric_float(value: int | None) -> int:
     """`None` -> 0, for the legacy float keys only.
 
@@ -355,12 +454,11 @@ def to_legacy_rows(outcome: Any, tasks: list[Task], links: list[Link], records: 
     for task in tasks:
         aid = task.id
         dates = outcome.dates[aid]
+        # Built *from* the blank row, so the computed and uncomputed exits
+        # cannot drift apart in their key sets.
         rows.append(
             {
-                "id": aid,
-                "ref": by_ref.get(aid),
-                "name": task.name,
-                "duration": task.duration_days,
+                **blank_row(task, by_ref.get(aid)),
                 "es": offset(network.early_start[aid], task.calendar_id),
                 "ef": offset(network.early_finish[aid], task.calendar_id),
                 "ls": offset(network.late_start[aid], task.calendar_id),
@@ -401,6 +499,7 @@ def to_legacy_rows(outcome: Any, tasks: list[Task], links: list[Link], records: 
     rows.sort(key=lambda r: (r["es"], r["ef"], r["id"]))
 
     return {
+        **blank_result(),
         "project_duration": offset(network.project_finish, DEFAULT_CALENDAR),
         "activity_count": len(rows),
         "critical_count": sum(1 for r in rows if r["critical"]),

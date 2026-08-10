@@ -242,6 +242,97 @@ def test_an_empty_schedule_does_not_raise() -> None:
     assert result["has_cycle"] is False
 
 
+def test_a_cyclic_network_reaches_the_optimiser_without_raising() -> None:
+    """The named regression Massing Core asked for.
+
+    `px.optimize` filters `0 < x["total_float"] <= 5` and only checks
+    `has_cycle` afterwards, so a cyclic schedule reaches that comparison. With
+    `total_float: None` it raised TypeError -- a crash in a route rather than a
+    refusal. The float coercion had landed on the computed exit only.
+    """
+    records = [
+        _record("id0", "SA-0001", 5, "SA-0002"),
+        _record("id1", "SA-0002", 5, "SA-0001"),
+    ]
+    result = schedule_cpm.compute(records)
+    assert result["has_cycle"] is True
+
+    # Exactly what px.optimize does, in the order it does it.
+    near_critical = [row for row in result["activities"] if 0 < row["total_float"] <= 5]
+    assert near_critical == [], "a cyclic network must offer no near-critical levers"
+
+
+@pytest.mark.parametrize("exit_name", ["computed", "cyclic"])
+def test_every_exit_agrees_on_the_row_shape(exit_name: str) -> None:
+    """Guard against the *class* of bug rather than the instance.
+
+    Three exits build a result -- normal, empty and cyclic -- and a coercion
+    applied to one is a coercion missing from the others. This pins that the
+    numeric keys are numeric and the key sets match, whichever way `compute()`
+    returned.
+    """
+    from massingplan.integrations.massing.schedule_engine import (
+        NULLABLE_ROW_KEYS,
+        NUMERIC_ROW_KEYS,
+    )
+
+    if exit_name == "computed":
+        records = _chain([3, 4])
+    else:
+        records = [
+            _record("id0", "SA-0001", 5, "SA-0002"),
+            _record("id1", "SA-0002", 5, "SA-0001"),
+        ]
+
+    rows = schedule_cpm.compute(records)["activities"]
+    assert rows, exit_name
+    for row in rows:
+        for key in NUMERIC_ROW_KEYS:
+            assert isinstance(row[key], int), f"{exit_name}: {key} is {row[key]!r}"
+        for key in NULLABLE_ROW_KEYS:
+            assert key in row, f"{exit_name}: {key} is missing"
+
+
+def test_all_three_exits_have_identical_top_level_keys() -> None:
+    """The same class of gap, one level up.
+
+    `cycle` existed only on the cyclic and empty exits, so a caller reading
+    `cpm["cycle"]` on a normal schedule got a KeyError; the date and
+    driving-path keys existed only on the computed one. Both break the first
+    time somebody draws a loop, in code that has worked for a year.
+    """
+    computed = set(schedule_cpm.compute(_chain([3, 4])))
+    empty = set(schedule_cpm.compute([]))
+    cyclic = set(
+        schedule_cpm.compute(
+            [
+                _record("id0", "SA-0001", 5, "SA-0002"),
+                _record("id1", "SA-0002", 5, "SA-0001"),
+            ]
+        )
+    )
+    assert computed == empty == cyclic, {
+        "computed only": sorted(computed - (empty | cyclic)),
+        "uncomputed only": sorted((empty | cyclic) - computed),
+    }
+    # And the keys a caller reaches for without checking are all there.
+    assert {"cycle", "has_cycle", "data_date", "driving_path"} <= computed
+
+
+def test_the_computed_and_cyclic_exits_have_identical_key_sets() -> None:
+    """Not merely overlapping. A key present on one exit and absent on the other
+    is a caller that works until the day somebody draws a loop.
+    """
+    computed = schedule_cpm.compute(_chain([3, 4]))["activities"][0]
+    cyclic = schedule_cpm.compute(
+        [
+            _record("id0", "SA-0001", 5, "SA-0002"),
+            _record("id1", "SA-0002", 5, "SA-0001"),
+        ]
+    )["activities"][0]
+    assert set(computed) == set(cyclic)
+
+
 def test_a_cycle_refuses_rather_than_inventing_dates() -> None:
     """Returning dates computed by breaking a loop in dictionary order is a
     confident wrong answer that EVM then consumes as fact.

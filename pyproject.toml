@@ -153,9 +153,9 @@ ignore = [
 # vendor's (`clndr_data`, `day_hr_cnt`). Renaming them to satisfy N806 would make
 # the code unmatchable against Oracle's own documentation, which is the only
 # specification these formats have.
-# The adoption kit's test module is a test -- it asserts, and it is copied into
-# the consumer's `tests/` where those rules would not apply either.
-"massingplan/integrations/massing/test_adoption.py" = ["S101", "E501"]
+# The adoption kit's conformance gate is a test -- it asserts, and it runs in
+# the consumer as a plain script rather than under this repo's pytest.
+"massingplan/integrations/massing/test_mp_engine.py" = ["S101", "E501"]
 "massingplan/core/xer.py" = ["N806"]
 "massingplan/core/mspdi.py" = ["N806"]
 
@@ -181,7 +181,7 @@ ignore_missing_imports = true
 # installed here. It is kept as real, linted Python rather than a template
 # because a template nobody type-checks is a template that has already drifted.
 [[tool.mypy.overrides]]
-module = ["aec_api.*", "massingplan.integrations.massing.test_adoption"]
+module = ["aec_api.*", "massingplan.integrations.massing.test_mp_engine"]
 ignore_missing_imports = true
 ignore_errors = true
 

@@ -28,6 +28,7 @@ records.
 from __future__ import annotations
 
 import re
+from collections.abc import Container
 from datetime import date, datetime
 from typing import Any
 
@@ -37,11 +38,10 @@ from massingplan.core.issues import IssueLog
 from massingplan.core.network import ActivityKind, Link, RelationType, Task
 from massingplan.core.timeaxis import WorkCalendar, WorkPattern
 
-#: `<ref><type><signed lag>` -- "A1010", "A1010SS", "A1010FS+3", "A1010FF-2d".
-_TOKEN = re.compile(
-    r"^(?P<ref>.+?)(?:(?P<type>FS|SS|FF|SF))?(?:(?P<lag>[+-]\s*\d+)\s*d?)?$",
-    re.IGNORECASE,
-)
+#: A trailing signed lag -- "+3", "-2d", "- 10".
+_LAG_SUFFIX = re.compile(r"([+-]\s*\d+)\s*[dD]?$")
+#: A trailing relationship type -- "FS", "ss".
+_TYPE_SUFFIX = re.compile(r"(FS|SS|FF|SF)$", re.IGNORECASE)
 
 _KINDS = {
     "task": ActivityKind.TASK,
@@ -111,8 +111,64 @@ def _duration_days(data: dict) -> int:
     return 1
 
 
-def parse_predecessor_tokens(raw: Any) -> list[tuple[str, RelationType, int]]:
-    """`"A1010FS+3, A1020SS"` -> `[("A1010", FS, 3), ("A1020", SS, 0)]`."""
+def _readings(token: str) -> list[tuple[str, RelationType, int]]:
+    """Every way a predecessor token could be read, best first.
+
+    The grammar is genuinely ambiguous and a single regex cannot resolve it.
+    `SA-0001` is either the activity `SA-0001`, or the activity `SA` with a lag
+    of minus one -- and `PREFIX-NNNN` is exactly the ref format the records
+    module generates, so this is the common case rather than a corner.
+
+    An earlier version used one non-greedy pattern, which always preferred the
+    *shortest* ref and therefore read every `SA-0001` as `SA` lag -1. The
+    predecessor then resolved to nothing, the relationship was dropped, and a
+    sequential chain came back as a fully parallel network whose duration was
+    the longest single activity. That is the same failure the whole adoption
+    exists to fix, reintroduced one layer up.
+
+    So the readings are ordered and the caller picks the first that names a real
+    activity. Preferring "this is a ref" over "this is a ref plus a lag" is the
+    safe direction: the worst case is a lag nobody meant being ignored, against
+    a dependency silently vanishing.
+    """
+    out: list[tuple[str, RelationType, int]] = [(token, RelationType.FS, 0)]
+
+    lag_match = _LAG_SUFFIX.search(token)
+    if lag_match:
+        body = token[: lag_match.start()].rstrip()
+        lag = int(lag_match.group(1).replace(" ", ""))
+        type_match = _TYPE_SUFFIX.search(body)
+        if type_match:
+            out.append(
+                (
+                    body[: type_match.start()].strip(),
+                    RelationType[type_match.group(1).upper()],
+                    lag,
+                )
+            )
+        if body:
+            out.append((body, RelationType.FS, lag))
+
+    type_only = _TYPE_SUFFIX.search(token)
+    if type_only:
+        stem = token[: type_only.start()].strip()
+        if stem:
+            out.append((stem, RelationType[type_only.group(1).upper()], 0))
+
+    return [(ref, rel, lag) for ref, rel, lag in out if ref]
+
+
+def parse_predecessor_tokens(
+    raw: Any, known: Container[str] | None = None
+) -> list[tuple[str, RelationType, int]]:
+    """`"A1010FS+3, A1020SS"` -> `[("A1010", FS, 3), ("A1020", SS, 0)]`.
+
+    `known` is the set of resolvable activity keys -- refs, WBS codes and ids.
+    When it is supplied, a token that names a real activity in full is read as
+    that activity and nothing is stripped from it. Without it the first reading
+    is returned, which is the whole token: callers that cannot resolve are
+    better served by an unresolved-token report than by a confident mis-parse.
+    """
     if not raw:
         return []
     out: list[tuple[str, RelationType, int]] = []
@@ -120,22 +176,18 @@ def parse_predecessor_tokens(raw: Any) -> list[tuple[str, RelationType, int]]:
         token = chunk.strip()
         if not token:
             continue
-        match = _TOKEN.match(token)
-        if match is None:
-            out.append((token, RelationType.FS, 0))
+        readings = _readings(token)
+        if not readings:
             continue
-        ref = (match.group("ref") or "").strip()
-        if not ref:
+        if known is None:
+            out.append(readings[0])
             continue
-        kind = match.group("type")
-        lag = match.group("lag")
-        out.append(
-            (
-                ref,
-                RelationType[kind.upper()] if kind else RelationType.FS,
-                int(lag.replace(" ", "")) if lag else 0,
-            )
-        )
+        resolved = next((r for r in readings if r[0] in known), None)
+        # Nothing resolves: fall back to the whole token. Reporting a *stripped*
+        # form would quote something the planner never typed -- telling someone
+        # who wrote `SA-0001` that "SA matches no activity" sends them looking
+        # for the wrong thing.
+        out.append(resolved if resolved is not None else readings[0])
     return out
 
 
@@ -210,7 +262,10 @@ def build_network(
                 percent_complete=percent_complete,
             )
         )
-        token_lists[rid] = parse_predecessor_tokens(data.get("predecessors"))
+        # `alias` is complete before this loop starts, which is what lets a
+        # token that names a real activity be read as that activity rather than
+        # split into a ref and a lag that happens to parse.
+        token_lists[rid] = parse_predecessor_tokens(data.get("predecessors"), alias)
 
     known = {t.id for t in tasks}
     links: list[Link] = []
@@ -263,6 +318,18 @@ def data_date_for(records: list[dict], fallback: date | None = None) -> date:
     return fallback or date.today()
 
 
+def _numeric_float(value: int | None) -> int:
+    """`None` -> 0, for the legacy float keys only.
+
+    Zero rather than a sentinel because every existing reader compares it
+    against a threshold, and a completed activity should fall outside every
+    "watch this one" filter -- which `0` does and `-1` or a large number would
+    not. The unmodified value is available as `total_float_days`, and
+    `has_float` distinguishes "no float" from "genuinely zero float".
+    """
+    return 0 if value is None else value
+
+
 def to_legacy_rows(outcome: Any, tasks: list[Task], links: list[Link], records: list[dict]) -> dict:
     """Render an engine result in the shape `schedule_cpm.compute()` always returned.
 
@@ -298,8 +365,25 @@ def to_legacy_rows(outcome: Any, tasks: list[Task], links: list[Link], records: 
                 "ef": offset(network.early_finish[aid], task.calendar_id),
                 "ls": offset(network.late_start[aid], task.calendar_id),
                 "lf": offset(network.late_finish[aid], task.calendar_id),
-                "total_float": network.total_float_days[aid],
-                "free_float": network.free_float_days[aid],
+                # Numeric, always -- the legacy contract. The engine reports
+                # `None` for completed work, and that is the better answer: a
+                # finished activity has no float, and writing 0 puts it on the
+                # critical path. But existing callers do arithmetic on this key
+                # without checking. `px.optimize` filters on
+                # `0 < total_float <= 5` behind an `_open()` test that decides
+                # completeness from `percent`, while the engine decides it from
+                # actual dates -- so an activity with an actual finish and no
+                # recorded percent is open to one and complete to the other, and
+                # the comparison raises TypeError.
+                #
+                # So the legacy keys stay numeric and the honest value is
+                # carried alongside, which is the same additive rule the rest of
+                # this function follows.
+                "total_float": _numeric_float(network.total_float_days[aid]),
+                "free_float": _numeric_float(network.free_float_days[aid]),
+                "total_float_days": network.total_float_days[aid],
+                "free_float_days": network.free_float_days[aid],
+                "has_float": network.total_float_days[aid] is not None,
                 "critical": network.is_critical(aid),
                 "predecessors": incoming.get(aid, []),
                 # -- new, additive --------------------------------------------

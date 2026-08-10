@@ -18,7 +18,10 @@ nobody has noticed yet:
 
 * **Verbatim.** No rewriting of imports, no local patches. `core` uses relative
   imports throughout precisely so this copy needs no edits.
-* **Tests come too.** A vendored library the consumer never exercises is a fork.
+* **A gate comes too.** A vendored library the consumer never exercises is a
+  fork. What travels is `test_mp_engine.py` -- stdlib-only, flat, namespaced --
+  and *not* upstream's pytest suite, which cannot run in a repo that has no
+  pytest. See `ADAPTER_FILES` for why each of those three properties matters.
 * **The pin is recorded.** `VENDOR.md` carries the upstream SHA and the exact
   commands to re-sync.
 
@@ -53,13 +56,36 @@ ADAPTER_FILES = {
     "schedule_engine.py": "src/aec_api/schedule_engine.py",
     "schedule_cpm.py": "src/aec_api/schedule_cpm.py",
     "schedule_import.py": "src/aec_api/schedule_import.py",
-    "test_adoption.py": "tests/test_schedule_engine_vendored.py",
+    # Flat, and namespaced `test_mp_`. Both matter, and both were learned the
+    # hard way on first adoption:
+    #
+    # *Flat*, because that repo's `run_tests.py` discovers with
+    # `HERE.glob("test_*.py")` -- not recursive. A suite one directory down does
+    # not run, and the gate reports green over whatever it was meant to catch.
+    #
+    # *Namespaced*, because `test_cpm`, `test_constraints` and `test_graph`
+    # already exist flat over there. A bare stem resolves to their file, and the
+    # vendored one silently never runs.
+    "test_mp_engine.py": "test_mp_engine.py",
 }
 
-#: The core test modules the consumer runs. Excluded: tests that exercise the
-#: Flask app, which does not exist over there.
-VENDORED_TESTS = [
-    "conftest.py",
+#: Upstream's own pytest modules are **not** copied.
+#:
+#: The consumer deliberately has no pytest -- `run_tests.py` shells out to
+#: `python test_x.py` and each file asserts in a `__main__` block. Copying a
+#: pytest suite there means every module dies on `import pytest` before it runs
+#: an assertion, which is what happened: ten modules failed in under a second,
+#: including the one covering the defect the adoption exists to fix.
+#:
+#: Adding pytest to that repo to make a vendored kit run would be the tail
+#: wagging the dog. So the consumer gets `test_mp_engine.py`, a stdlib-only
+#: conformance gate sized to what its callers actually depend on, and the full
+#: suite stays here where it runs on every push.
+VENDORED_TESTS: list[str] = []
+
+#: Kept for reference: what the full suite covers upstream, and would have been
+#: copied under the old scheme.
+UPSTREAM_SUITE = [
     "test_timeaxis_kernel.py",
     "test_units.py",
     "test_graph.py",
@@ -125,6 +151,14 @@ VENDOR_MD = """# Vendored: massingplan core
 
 ## What this is
 
+**"Pure standard library" describes this subtree, not the upstream project.**
+`massingplan/core/` imports nothing but the standard library, and an
+import-linter contract plus a dependency-free CI job hold it that way, because
+that is the property this copy depends on. The upstream *project* around it
+declares Flask, SQLAlchemy, Alembic and argon2-cffi for its web application —
+so anyone verifying the claim should read this directory, not that
+`pyproject.toml`. Checking the project would give the wrong answer.
+
 A pure-standard-library construction scheduling engine: multi-calendar CPM with
 all four relationship types and all ten constraint types, data date and
 progressed logic, DCMA 14-point quality assessment, Monte Carlo risk, resource
@@ -168,13 +202,32 @@ cp <massingplan>/massingplan/py.typed services/api/src/massingplan/py.typed
 
 ## Tests
 
-Upstream's own test modules are copied to `services/api/tests/vendor_massingplan/`
-and run by this repo's pytest. That is the drift detector: a vendored library
-nobody exercises is a fork you have not noticed yet.
+`services/api/test_mp_engine.py` — a **stdlib-only** conformance gate. No pytest,
+a `__main__` runner, flat placement, and a `test_mp_` prefix.
 
 ```bash
-pytest services/api/tests/vendor_massingplan -q
+python test_mp_engine.py       # from services/api
 ```
+
+Each of those three properties was learned on first adoption. Flat, because
+`run_tests.py` discovers with a non-recursive glob and a suite one directory
+down does not run — silently, with the gate green over the very defect it was
+meant to catch. Prefixed, because `test_cpm`, `test_constraints` and
+`test_graph` already exist flat here, so a bare stem resolves to the local file.
+Stdlib, because this repo deliberately has no pytest and a vendored suite that
+imports it dies before its first assertion.
+
+**Register it with `run_tests.py`.** It is not discovered by accident, and a
+gate nobody runs is worse than no gate — it reads as coverage.
+
+The gate is not upstream's suite. massingplan runs roughly 780 tests on every
+push, including a 100%-branch-coverage job on the calendar kernel; duplicating
+those here would create two copies to keep in step. What this file answers is
+the narrower question: does the copy in `src/massingplan` still behave the way
+*this* repo's callers require? It checks the calendar adjoint invariant, the
+`compute()` dict contract, that a sequential chain sums, that float is numeric
+for completed work, that a cycle refuses rather than inventing dates, and that
+`TASKPRED` is read on import.
 """
 
 
@@ -232,25 +285,12 @@ def sync(target: Path, *, check: bool, engine_only: bool = False) -> int:
         encoding="utf-8",
     )
 
-    # Upstream's own tests, so the consumer exercises what it vendored.
-    tests_target = target.parent.parent / "tests" / "vendor_massingplan"
-    if tests_target.exists():
-        shutil.rmtree(tests_target)
-    tests_target.mkdir(parents=True, exist_ok=True)
-    copied = 0
-    for name in VENDORED_TESTS:
-        source_test = REPO / "tests" / name
-        if source_test.is_file():
-            shutil.copy2(source_test, tests_target / name)
-            copied += 1
-    (tests_target / "README.md").write_text(
-        "# Vendored tests\n\n"
-        "Copied verbatim from MassingCloud/massingplan by "
-        "`scripts/vendor_to_massing.py`. Do not edit here -- fix upstream and\n"
-        "re-sync. They run in this repo so that a drifted vendor copy fails a\n"
-        "build rather than being discovered in production.\n",
-        encoding="utf-8",
-    )
+    # Remove the old nested pytest suite if a previous sync left one. It never
+    # ran there -- `run_tests.py` globs one level and the modules died on
+    # `import pytest` anyway -- and leaving it looks like coverage that exists.
+    stale = target.parent.parent / "tests" / "vendor_massingplan"
+    if stale.exists():
+        shutil.rmtree(stale)
 
     # The adapter. `--engine-only` leaves it alone, for a re-sync that should
     # pick up engine fixes without touching adapter code the consumer may be
@@ -268,12 +308,16 @@ def sync(target: Path, *, check: bool, engine_only: bool = False) -> int:
             adapters += 1
 
     files = len(list(target.rglob("*.py")))
-    print(f"vendored {files} modules and {copied} test modules to {target}")
+    print(f"vendored {files} modules to {target}")
     if adapters:
         print(f"copied {adapters} adapter modules into {target.parent.parent}")
         print(
             "still to apply by hand: integrations/massing/research-importer.patch "
             "(the P6 importer) and vendor-massingplan-drift.yml"
+        )
+        print(
+            "register test_mp_engine.py with run_tests.py -- it is flat and "
+            "stdlib-only, so `python test_mp_engine.py` is all it needs"
         )
     print(f"pinned at {sha} (digest {tree_digest(SOURCE)})")
     return 0

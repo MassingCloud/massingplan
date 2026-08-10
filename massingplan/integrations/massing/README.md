@@ -25,8 +25,35 @@ engine release look like a change to the consumer.
 | `schedule_cpm.py` | `services/api/src/aec_api/schedule_cpm.py` | Replaces the 105-line engine with a shim. `compute()` keeps the exact dict every caller reads. |
 | `schedule_import.py` | `services/api/src/aec_api/schedule_import.py` | Full-fidelity XER/MSPDI import, including the `TASKPRED` table the current importer omits. |
 | `research-importer.patch` | `routers/research.py` | Routes the upload endpoint through the above, and returns an import report. |
-| `test_adoption.py` | `services/api/tests/test_schedule_engine_vendored.py` | Proves the legacy contract still holds and that a real XER imports with its logic. |
-| `vendor-massingplan-drift.yml` | `.github/workflows/` | Weekly staleness check on the pin, and runs upstream's tests. |
+| `test_mp_engine.py` | `services/api/test_mp_engine.py` | **Stdlib-only** conformance gate. No pytest, `__main__` runner, flat, `test_mp_` prefix — see below. |
+| `vendor-massingplan-drift.yml` | `.github/workflows/` | Weekly staleness check on the pin. |
+
+### The gate, and why it looks like that
+
+Three properties, each learned on first adoption rather than designed in.
+
+**Stdlib only, with a `__main__` runner.** massing deliberately has no
+pytest: `run_tests.py` shells out to `python test_x.py` and each file asserts
+in a `__main__` block. The first version of this kit shipped pytest modules,
+and all ten died on `import pytest` in under a second. Adding pytest there to
+make a vendored kit run would be the tail wagging the dog.
+
+**Flat.** `run_tests.py` discovers with `HERE.glob("test_*.py")` — not
+recursive. The first version landed under `services/api/tests/`, so none of it
+ran, including the suite covering the `TASKPRED` defect the whole adoption
+exists for. The gate would have been green over the exact bug being fixed.
+
+**Prefixed `test_mp_`.** `test_cpm`, `test_constraints` and `test_graph`
+already exist flat in that repo, so a bare stem in the manifest resolves to
+the local file and the vendored one silently never runs.
+
+**You must register it with `run_tests.py`.** It is not discovered by
+accident, and a gate nobody runs reads as coverage while providing none.
+
+It is not upstream's suite. massingplan runs ~780 tests on every push,
+including a 100%-branch-coverage job on the calendar kernel. Duplicating those
+would create two copies to keep in step. The gate answers the narrower
+question — does the vendored copy still behave the way *your* callers require?
 
 ## Why it is worth adopting
 
@@ -45,8 +72,12 @@ implementations reading an input that is wrong.
 ```bash
 # from a massingplan checkout, with massing on a branch of its own choosing
 python scripts/vendor_to_massing.py --target <massing>/services/api/src/massingplan
-cd <massing>/services/api && PYTHONPATH=src pytest tests/vendor_massingplan tests/test_schedule_engine_vendored.py -q
+cd <massing>/services/api && python test_mp_engine.py
 ```
+
+The sync refuses to produce a meaningful pin from a dirty upstream tree — it
+warns, and the recorded SHA then describes something that was never committed.
+Do not install the drift workflow until the pin is real.
 
 Then apply `research-importer.patch` and run massing's own `test_cpm.py` and
 `test_eot.py` -- both pass against the new engine unchanged.

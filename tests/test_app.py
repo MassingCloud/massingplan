@@ -121,8 +121,9 @@ def test_no_route_is_skipped_silently(app) -> None:
     # An allow-list rather than an empty assertion, because parameterised routes
     # are legitimate -- what is not legitimate is one nobody tests. Every entry
     # here is covered by name: the project pages and tenant isolation in
-    # test_auth.py, key revocation and org switching likewise, and webhook
-    # removal in test_webhooks.py.
+    # test_auth.py, key revocation and org switching likewise, webhook
+    # removal in test_webhooks.py, and the location model in
+    # test_location_persistence.py.
     covered_by_name = {
         "main.project_detail",
         "main.set_baseline",
@@ -130,6 +131,10 @@ def test_no_route_is_skipped_silently(app) -> None:
         "main.export_xer",
         "main.revoke_key",
         "main.delete_webhook",
+        "main.project_linear",
+        "main.set_locations",
+        "main.add_trade",
+        "main.delete_trade",
         "auth.switch",
     }
     assert parameterised <= covered_by_name, (

@@ -43,8 +43,11 @@ from ..models import (
     BaselineActivity,
     Calendar,
     CalendarException,
+    LinearActivity,
+    LinearQuantity,
     Organization,
     Project,
+    ProjectLocation,
     Relationship,
     Resource,
 )
@@ -118,6 +121,8 @@ def list_projects(session: Session, organization_id: str | None) -> Sequence[Pro
             noload(Project.relationships_),
             noload(Project.baselines),
             noload(Project.resources),
+            noload(Project.locations),
+            noload(Project.linear_activities),
         )
     )
     return session.scalars(statement).all()
@@ -516,3 +521,121 @@ def baseline_as_outcome_rows(baseline: Baseline) -> list[dict[str, Any]]:
         }
         for row in baseline.rows
     ]
+
+
+# -- the location model ----------------------------------------------------
+
+
+def to_linear(project: Project) -> tuple[list[Any], list[Any]]:
+    """Stored rows to `core.locations` inputs.
+
+    Returns `(tasks, locations)` in that order because `core.locations.compute`
+    takes them that way, and swapping two same-shaped lists at a call site is
+    the kind of mistake types do not catch.
+
+    Quantities are keyed by the location's **key**, not its row id, because that
+    is what `LinearTask.quantities` matches against and what the planner typed.
+    """
+    from ..core.locations import LinearTask, Location
+
+    locations = [
+        Location(id=row.key, name=row.name, sequence=row.sequence)
+        for row in sorted(project.locations, key=lambda location: (location.sequence, location.key))
+    ]
+    by_id = {row.id: row.key for row in project.locations}
+
+    tasks = []
+    for row in sorted(project.linear_activities, key=lambda a: (a.sequence, a.key)):
+        quantities = {
+            by_id[q.location_id]: q.quantity for q in row.quantities if q.location_id in by_id
+        }
+        tasks.append(
+            LinearTask(
+                id=row.key,
+                name=row.name,
+                duration_days=row.duration_days,
+                quantities=quantities,
+                rate=row.rate,
+                buffer_days=row.buffer_days,
+                crews=row.crews,
+                calendar_id=row.calendar_key,
+            )
+        )
+    return tasks, locations
+
+
+def replace_locations(
+    session: Session, project: Project, entries: Sequence[tuple[str, str]]
+) -> None:
+    """Set the whole breakdown at once, in the order given.
+
+    Replace rather than merge, for the reason a re-import replaces a schedule: a
+    breakdown is a statement of what the building is, and merging two of them
+    produces a floor list nobody authored.
+
+    Quantities cascade away with the locations they belonged to. That is the
+    honest outcome -- a quantity against a level that no longer exists is not
+    data worth keeping -- and it is why they are rows with a foreign key rather
+    than keys in a blob, which would have silently survived.
+    """
+    project.locations.clear()
+    session.flush()
+    for index, (key, name) in enumerate(entries):
+        project.locations.append(
+            ProjectLocation(
+                organization_id=project.organization_id,
+                project_id=project.id,
+                key=key,
+                name=name,
+                sequence=index,
+            )
+        )
+    session.flush()
+
+
+def upsert_linear_activity(
+    session: Session,
+    project: Project,
+    *,
+    key: str,
+    name: str = "",
+    duration_days: int = 1,
+    rate: float | None = None,
+    buffer_days: int = 0,
+    crews: int = 1,
+    calendar_key: str = "STD",
+    quantities: dict[str, float] | None = None,
+) -> LinearActivity:
+    """Add or update one trade, keyed by the planner's own code.
+
+    Upsert rather than append: re-entering a trade should correct it, not
+    produce a second one with the same name three rows down.
+    """
+    existing = next((a for a in project.linear_activities if a.key == key), None)
+    if existing is None:
+        existing = LinearActivity(
+            organization_id=project.organization_id,
+            project_id=project.id,
+            key=key,
+            sequence=len(project.linear_activities),
+        )
+        project.linear_activities.append(existing)
+
+    existing.name = name or key
+    existing.duration_days = duration_days
+    existing.rate = rate
+    existing.buffer_days = buffer_days
+    existing.crews = crews
+    existing.calendar_key = calendar_key
+
+    if quantities is not None:
+        by_key = {row.key: row.id for row in project.locations}
+        existing.quantities.clear()
+        session.flush()
+        for location_key, amount in quantities.items():
+            if location_key in by_key:
+                existing.quantities.append(
+                    LinearQuantity(location_id=by_key[location_key], quantity=amount)
+                )
+    session.flush()
+    return existing

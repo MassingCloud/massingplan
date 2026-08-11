@@ -18,6 +18,7 @@ from .identity import (
     Role,
     User,
 )
+from .locations import LinearActivity, LinearQuantity, ProjectLocation
 from .schedule import (
     Activity,
     Assignment,
@@ -46,10 +47,13 @@ __all__ = [
     "CalendarException",
     "DeliveryStatus",
     "ImportJob",
+    "LinearActivity",
+    "LinearQuantity",
     "Membership",
     "Organization",
     "Permission",
     "Project",
+    "ProjectLocation",
     "Relationship",
     "Resource",
     "Role",

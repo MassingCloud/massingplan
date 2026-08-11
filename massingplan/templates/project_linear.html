@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}{{ project.code }} — line of balance — massingplan{% endblock %}
+{% block content %}
+<h1>{{ project.code }} — line of balance</h1>
+<p class="note"><a href="{{ url_for('main.project_detail', project_id=project.id) }}">← back to the schedule</a></p>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if linear %}
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Duration</span>
+    <span class="tile-value">{{ linear.duration_working_days }}</span>
+    <span class="tile-sub">working days</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Flow</span>
+    <span class="tile-value">{{ project.linear_activities | length }}</span>
+    <span class="tile-sub">trades through {{ project.locations | length }} locations</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Continuity cost</span>
+    <span class="tile-value">{{ linear.continuity_cost_days.values() | sum }}</span>
+    <span class="tile-sub">crew-days of float given up</span>
+  </div>
+</section>
+
+<section>
+  <h2>Line of balance</h2>
+  <p class="note">
+    Time left to right, location up the page in flow order. Each trade is one
+    line and its <strong>slope is the production rate</strong>. Lines that
+    converge are crews running out of room; the marker is the
+    <strong>binding location</strong>, where the buffer is fully consumed and a
+    slip is felt first.
+  </p>
+  <div class="lob-host"
+       data-segments="{{ linear.segments | tojson | forceescape }}"
+       data-interferences="{{ linear.interferences | tojson | forceescape }}"></div>
+</section>
+
+{% if linear.interferences %}
+<section>
+  <h2>Where the trades come closest</h2>
+  <table class="checks">
+    <thead><tr><th>Handover</th><th>Binding location</th><th>Clearance</th><th>Reading</th></tr></thead>
+    <tbody>
+      {% for hit in linear.interferences %}
+      <tr class="{{ 'status-fail' if hit.gap_days < 0 else '' }}">
+        <td>{{ hit.predecessor_id }} → {{ hit.successor_id }}</td>
+        <td><strong>{{ hit.location_id }}</strong></td>
+        <td>{% if hit.gap_days < 0 %}<span class="pill pill-fail">{{ hit.gap_days }}d</span>{% else %}{{ hit.gap_days }}d{% endif %}</td>
+        <td class="muted">
+          {% if hit.gap_days < 0 %}The two trades share the space here.
+          {% elif hit.converging %}{{ hit.successor_id }} is faster and closing — a slip in {{ hit.predecessor_id }} is felt at the far end immediately.
+          {% else %}{{ hit.successor_id }} loses ground as it goes, so the gap only widens.{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if linear.issues %}
+<section>
+  <h2>Issues <span class="muted">({{ linear.issues | length }})</span></h2>
+  <table class="checks">
+    <thead><tr><th>Severity</th><th>Code</th><th>What</th><th>What was done</th></tr></thead>
+    <tbody>
+      {% for issue in linear.issues %}
+      <tr>
+        <td><span class="pill pill-{{ 'fail' if issue.severity == 'error' else 'warn' }}">{{ issue.severity }}</span></td>
+        <td><code>{{ issue.code }}</code></td>
+        <td>{{ issue.message }}</td>
+        <td class="muted">{{ issue.action }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% else %}
+<p class="lede">
+  This project has no location model yet. A line of balance needs two things: an
+  ordered list of places, and the trades that flow through them.
+</p>
+{% endif %}
+
+<section>
+  <h2>Locations</h2>
+  <p class="note">
+    One per line, in flow order — bottom of the building first, or the start of
+    the chainage. <code>Key | Name</code>, the name optional. Replacing the list
+    replaces the whole breakdown, and any quantities recorded against a location
+    that is no longer there go with it.
+  </p>
+  <form method="post" action="{{ url_for('main.set_locations', project_id=project.id) }}" class="uploader">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="locations">Location breakdown</label>
+    <textarea id="locations" name="locations" rows="8" spellcheck="false"
+      placeholder="Level 1 | Ground floor&#10;Level 2&#10;Level 3">{% for loc in project.locations %}{{ loc.key }}{% if loc.name %} | {{ loc.name }}{% endif %}
+{% endfor %}</textarea>
+    <button type="submit">Save breakdown</button>
+  </form>
+</section>
+
+<section>
+  <h2>Trades</h2>
+  <p class="note">
+    In handover order: each follows the one before it through every location.
+    Give a duration per location, or a production rate if you have a take-off.
+  </p>
+  {% if project.linear_activities %}
+  <table class="checks">
+    <thead>
+      <tr><th>#</th><th>Trade</th><th>Per location</th><th>Buffer</th><th>Crews</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for trade in project.linear_activities %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td><strong>{{ trade.key }}</strong>{% if trade.name and trade.name != trade.key %} <span class="muted">{{ trade.name }}</span>{% endif %}</td>
+        <td>{% if trade.rate %}{{ trade.rate }}/day{% else %}{{ trade.duration_days }}d{% endif %}</td>
+        <td>{{ trade.buffer_days }}d</td>
+        <td class="muted">{{ trade.crews }}</td>
+        <td>
+          <form method="post" action="{{ url_for('main.delete_trade', project_id=project.id, trade_key=trade.key) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="linkish">remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">No trades yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('main.add_trade', project_id=project.id) }}" class="uploader">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="trade-key">Key</label>
+    <input type="text" id="trade-key" name="key" placeholder="Drywall" required>
+    <label for="trade-name">Name (optional)</label>
+    <input type="text" id="trade-name" name="name" placeholder="Drywall and taping">
+    <label for="trade-duration">Working days per location</label>
+    <input type="number" id="trade-duration" name="duration_days" value="1" min="0">
+    <label for="trade-rate">Production rate per day (optional, needs quantities)</label>
+    <input type="number" id="trade-rate" name="rate" step="any" min="0">
+    <label for="trade-buffer">Buffer after the previous trade (days)</label>
+    <input type="number" id="trade-buffer" name="buffer_days" value="0">
+    <label for="trade-crews">Crews</label>
+    <input type="number" id="trade-crews" name="crews" value="1" min="1">
+    <button type="submit">Add or update trade</button>
+  </form>
+  <p class="note">
+    Re-entering an existing key updates that trade rather than adding a second
+    one with the same name.
+  </p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/lob.js') }}"></script>
+{% endblock %}

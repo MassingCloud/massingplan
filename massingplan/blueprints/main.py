@@ -58,9 +58,11 @@ def demo() -> Any:
 def linear() -> Any:
     """A worked location-based schedule, with no sign-in and nothing stored.
 
-    Seeded from code, like `/demo`, because locations are not persisted yet --
-    the engine and the JSON API exist and the storage does not. A page that
-    implied otherwise would be the third claim this repo has had to walk back.
+    Seeded from code like `/demo`, and for the same reason: so the feature can
+    be seen without an account. A *real* project keeps its breakdown in the
+    database now -- `/projects/<id>/linear`. This docstring said locations were
+    not persisted until they were, which is the class of stale claim this repo
+    has already had to walk back twice.
     """
     from ..services.demo import linear_demo_payload
 
@@ -215,6 +217,114 @@ def delete_project(project_id: str) -> Any:
         )
         session.delete(project)
     return redirect(url_for("main.projects_list"))
+
+
+# -- the location model ----------------------------------------------------
+
+
+@bp.get("/projects/<project_id>/linear")
+@deps.login_required
+def project_linear(project_id: str) -> Any:
+    """The project's line of balance, or the form to define one."""
+    project = deps.load_project(project_id)
+    try:
+        linear = projects.linear_schedule(project)
+    except projects.ProjectError as exc:
+        return render_template(
+            "project_linear.html", project=project, linear=None, error=str(exc)
+        ), 400
+    return render_template("project_linear.html", project=project, linear=linear, error=None)
+
+
+@bp.post("/projects/<project_id>/linear/locations")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def set_locations(project_id: str) -> Any:
+    """Replace the whole breakdown, one location per line.
+
+    A textarea rather than a row-at-a-time editor: a breakdown is forty floors
+    entered once, and making somebody click "add" forty times is how a feature
+    goes unused. `Key | Name` on each line, the name optional.
+    """
+    project = deps.load_project(project_id)
+    raw = request.form.get("locations", "")
+    entries = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        key, _, name = line.partition("|")
+        entries.append((key.strip()[:80], name.strip()[:200]))
+
+    seen = {key for key, _ in entries}
+    if len(seen) != len(entries):
+        return render_template(
+            "project_linear.html",
+            project=project,
+            linear=None,
+            error="Two locations share a key. Each one has to be distinct -- "
+            "the trades reference it.",
+        ), 400
+
+    with deps.committing() as session:
+        repo.replace_locations(session, project, entries)
+        accounts.audit(
+            session,
+            organization_id=project.organization_id,
+            action="linear.locations",
+            actor_id=deps.current_principal().subject_id,
+            actor_label=deps.current_principal().label,
+            subject_type="project",
+            subject_id=project.id,
+            summary=f"set a {len(entries)}-location breakdown",
+        )
+    return redirect(url_for("main.project_linear", project_id=project.id))
+
+
+@bp.post("/projects/<project_id>/linear/trades")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def add_trade(project_id: str) -> Any:
+    project = deps.load_project(project_id)
+    key = request.form.get("key", "").strip()[:80]
+    if not key:
+        return render_template(
+            "project_linear.html",
+            project=project,
+            linear=None,
+            error="A trade needs a key -- it is what the handover order refers to.",
+        ), 400
+
+    def _int(field: str, default: int) -> int:
+        try:
+            return int(request.form.get(field) or default)
+        except ValueError:
+            return default
+
+    rate_raw = request.form.get("rate", "").strip()
+    with deps.committing() as session:
+        repo.upsert_linear_activity(
+            session,
+            project,
+            key=key,
+            name=request.form.get("name", "").strip()[:200],
+            duration_days=max(0, _int("duration_days", 1)),
+            rate=float(rate_raw) if rate_raw else None,
+            buffer_days=_int("buffer_days", 0),
+            crews=max(1, _int("crews", 1)),
+        )
+    return redirect(url_for("main.project_linear", project_id=project.id))
+
+
+@bp.post("/projects/<project_id>/linear/trades/<trade_key>/delete")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def delete_trade(project_id: str, trade_key: str) -> Any:
+    project = deps.load_project(project_id)
+    with deps.committing() as session:
+        trade = next((a for a in project.linear_activities if a.key == trade_key), None)
+        if trade is None:
+            raise errors.NotFound("no such trade")
+        project.linear_activities.remove(trade)
+        session.flush()
+    return redirect(url_for("main.project_linear", project_id=project.id))
 
 
 # -- import ----------------------------------------------------------------

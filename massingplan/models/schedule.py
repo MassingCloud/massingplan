@@ -39,6 +39,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.constraints import ConstraintType
 from ..core.network import ActivityKind, LagCalendar, ProgressMode, RelationType
 from .base import Base, TimestampMixin, date_column, days_column, org_column, pk_column
+from .locations import LinearActivity, ProjectLocation
 
 
 #: `native_enum=False` stores the enum's *value* as a VARCHAR with a CHECK
@@ -155,6 +156,23 @@ class Project(Base, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
         passive_deletes=True,
+    )
+    #: The location breakdown and the trades flowing through it. Empty on every
+    #: project that has not been given one, which is most of them -- a CPM
+    #: schedule is complete without a location model.
+    locations: Mapped[list[ProjectLocation]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        passive_deletes=True,
+        order_by="ProjectLocation.sequence",
+    )
+    linear_activities: Mapped[list[LinearActivity]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        passive_deletes=True,
+        order_by="LinearActivity.sequence",
     )
 
     @property

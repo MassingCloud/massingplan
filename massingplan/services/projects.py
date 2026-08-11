@@ -9,6 +9,7 @@ back to be forgotten.
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -312,4 +313,59 @@ def stored_summary(project: Project) -> dict[str, Any]:
         # baseline -- which is different from "on time" and must not render as 0.
         "slip_days": slip,
         "stale": finish is None,
+    }
+
+
+def linear_schedule(project: Project, *, start: date | None = None) -> dict[str, Any] | None:
+    """The stored location model, computed. `None` when there is not one.
+
+    `None` rather than an empty result, because "this project has no location
+    breakdown" and "this project has a breakdown that schedules to nothing" are
+    different states and the page says something different for each.
+
+    Returns the same shape `api.schedules.schedule_linear` does, so the template
+    that renders the worked example renders a real project unchanged.
+    """
+    from ..core.locations import LinearScheduleError, compute, to_network
+    from ..core.timeaxis import standard_calendar
+
+    tasks, locations = repo.to_linear(project)
+    if not tasks or not locations:
+        return None
+
+    began = start or project.planned_start or project.data_date or date.today()
+    calendar = standard_calendar()
+    try:
+        result = compute(tasks, locations)
+        net_tasks, links, _cals = to_network(
+            result, tasks, locations, start=began, calendar=calendar
+        )
+    except LinearScheduleError as exc:
+        raise ProjectError(str(exc)) from exc
+
+    return {
+        "start": began.isoformat(),
+        "duration_working_days": result.duration_days,
+        "segments": result.to_rows(start=began, calendar=calendar),
+        "interferences": [i.to_dict() for i in result.interferences],
+        "continuity_cost_days": result.continuity_cost_days,
+        "issues": result.issues.to_list(),
+        "activities": [
+            {
+                "id": task.id,
+                "name": task.name,
+                "duration_days": task.duration_days,
+                "calendar_id": task.calendar_id,
+                "constraint": task.constraint.value,
+                "constraint_date": (
+                    task.constraint_date.isoformat() if task.constraint_date else None
+                ),
+                "predecessors": [
+                    {"id": link.predecessor, "type": link.type.value, "lag_days": link.lag_days}
+                    for link in links
+                    if link.successor == task.id
+                ],
+            }
+            for task in net_tasks
+        ],
     }

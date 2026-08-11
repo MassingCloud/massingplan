@@ -123,6 +123,13 @@
 </section>
 {% endif %}
 
+{% if project %}
+<p class="note">
+  <a href="{{ url_for('main.project_linear', project_id=project.id) }}">Line of balance →</a>
+  — where the crews are, and where they close on each other. A Gantt cannot show that.
+</p>
+{% endif %}
+
 <section>
   <h2>Schedule</h2>
   <div id="gantt"

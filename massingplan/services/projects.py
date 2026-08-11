@@ -419,7 +419,18 @@ def parse_quantities(raw: str, location_keys: list[str]) -> tuple[dict[str, floa
             continue
 
         if not separator:
-            # A bare number: the default for every location.
+            # A bare number: the default for every location -- and with no
+            # locations there is nothing for it to be the default *of*.
+            # `dict.fromkeys([], v)` is `{}`, which is falsy, which means the
+            # caller's "quantities need a rate" check short-circuits and the
+            # route redirects as though the take-off had been stored. That is
+            # this function's own stated failure mode reached from the inside.
+            if not location_keys:
+                problems.append(
+                    f"line {number}: there is no location breakdown to apply a "
+                    "take-off to -- enter the locations first"
+                )
+                continue
             quantities.update(dict.fromkeys(location_keys, value))
             continue
         if key not in known:

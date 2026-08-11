@@ -150,6 +150,18 @@ def test_zero_is_a_quantity_and_not_a_missing_one() -> None:
     assert quantities["L2"] == 0.0
 
 
+def test_a_take_off_with_no_breakdown_to_apply_it_to_is_refused() -> None:
+    """`dict.fromkeys([], v)` is `{}`, which is falsy, which used to mean the
+    route's "quantities need a rate" check short-circuited and the redirect
+    reported success on a take-off that was never stored. This function's own
+    stated failure mode, reached from the inside.
+    """
+    quantities, problems = projects.parse_quantities("380", [])
+    assert quantities == {}
+    assert len(problems) == 1
+    assert "breakdown" in problems[0]
+
+
 @pytest.mark.parametrize("word", ["nan", "inf", "-inf", "Infinity", "NaN"])
 def test_the_two_words_float_accepts_that_are_not_quantities(word: str) -> None:
     """`float()` parses these, and then they survive every ordered comparison --
@@ -221,6 +233,72 @@ def test_a_take_off_for_a_location_that_is_not_there_is_refused(client, project_
         assert project.linear_activities == [], "a rejected form must store nothing"
 
 
+def test_a_take_off_entered_before_the_breakdown_does_not_report_success(
+    client, project_id
+) -> None:  # type: ignore[no-untyped-def]
+    """The trades form renders whether or not a breakdown exists, so trades
+    first is an ordinary order of work. Typing a take-off there used to 302 as
+    though it had been stored, with the take-off column reading em dash and no
+    error anywhere -- a silently dropped take-off, which is the one outcome
+    this whole path exists to prevent.
+    """
+    response = client.post(
+        f"/projects/{project_id}/linear/trades",
+        data={"key": "Drywall", "rate": "95", "quantities": "380"},
+    )
+    assert response.status_code == 400
+    assert "breakdown" in response.get_data(as_text=True)
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        assert project.linear_activities == []
+
+
+def test_a_capped_problem_list_says_that_it_was_capped(client, project_id) -> None:
+    """A list that does not name its cap reads as the complete list, and the
+    planner fixes ten lines only to be told about ten more.
+    """
+    client.post(f"/projects/{project_id}/linear/locations", data={"locations": "L1\nL2"})
+    typed = "\n".join(f"Level {n} | 100" for n in range(1, 15))
+    body = client.post(
+        f"/projects/{project_id}/linear/trades",
+        data={"key": "Drywall", "rate": "95", "quantities": typed},
+    ).get_data(as_text=True)
+    assert "and 4 more" in body
+
+
+# There is no test here for `q.location` being an N+1 in the trades table.
+# It looks like one and is not: `Project.locations` loads the whole collection
+# in a single query, so every row the many-to-one can point at is already in
+# the identity map. Measured at 12 statements to render the page, and 13 with
+# `lazy="selectin"` on the relationship -- the "fix" is a regression. A count
+# assertion was written, and then deleted, because it could not be made to fail
+# by any plausible edit: `Project.locations` set back to `lazy="select"` still
+# loads the collection in one query. A green test that nothing can turn red is
+# not a guard, it is the shape of one. The reasoning lives in
+# `models/locations.py` beside the relationship instead.
+
+
+def test_the_stored_take_off_reads_in_flow_order(client, project_id) -> None:  # type: ignore[no-untyped-def]
+    """A take-off is read against the building, bottom to top. Row order out of
+    the database is under no obligation to match it.
+    """
+    client.post(f"/projects/{project_id}/linear/locations", data={"locations": "L1\nL2\nL3\nL4"})
+    client.post(
+        f"/projects/{project_id}/linear/trades",
+        data={
+            "key": "Drywall",
+            "rate": "95",
+            "quantities": "L3 | 300\nL1 | 100\nL4 | 400\nL2 | 200",
+        },
+    )
+    body = client.get(f"/projects/{project_id}/linear").get_data(as_text=True)
+    listing = body.split('<p class="offenders">')[1].split("</p>")[0]
+    shown = [pair.split(":")[0].strip() for pair in listing.split(",")]
+    assert shown == ["L1", "L2", "L3", "L4"], listing
+
+
 def test_every_problem_is_named_not_just_the_first(client, project_id) -> None:  # type: ignore[no-untyped-def]
     """Reporting one error at a time turns a forty-line take-off into forty
     round trips.
@@ -255,6 +333,20 @@ def test_a_rejected_form_hands_back_what_was_typed(client, project_id) -> None: 
     assert 'value="95"' in body
     assert 'value="3"' in body
     assert "Level 8 | 200" in body
+
+
+def test_a_locations_error_does_not_blank_the_trade_forms_defaults(client, project_id) -> None:  # type: ignore[no-untyped-def]
+    """`submitted` is whichever form failed. Attribute access on the one that
+    did not renders Undefined as "" and quietly replaces the documented
+    defaults with blank boxes.
+    """
+    client.post(f"/projects/{project_id}/linear/locations", data={"locations": "L1\nL2"})
+    body = client.post(
+        f"/projects/{project_id}/linear/locations", data={"locations": "L1\nL1"}
+    ).get_data(as_text=True)
+    assert "share a key" in body
+    assert 'name="duration_days" min="0"\n      value="1"' in body
+    assert 'name="crews" min="1"\n      value="1"' in body
 
 
 def test_the_form_starts_empty_on_a_plain_visit(client, project_id) -> None:  # type: ignore[no-untyped-def]

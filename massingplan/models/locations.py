@@ -137,6 +137,13 @@ class LinearQuantity(Base):
     quantity: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     activity: Mapped[LinearActivity] = relationship(back_populates="quantities")
+    # Deliberately left lazy. The trades page names the location of every stored
+    # quantity, which looks like an N+1 waiting to happen -- but `Project`
+    # loads `locations` with `selectin`, so every row this could point at is
+    # already in the identity map and the many-to-one resolves without a query.
+    # Measured: 12 statements to render the page this way, 13 with `selectin`
+    # here. The property that matters is guarded by a query count in
+    # `tests/test_takeoff.py`, not by this line.
     location: Mapped[ProjectLocation] = relationship()
 
     # The database cascades from both parents, so the unit of work's own DELETE

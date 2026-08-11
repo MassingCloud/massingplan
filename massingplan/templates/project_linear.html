@@ -103,7 +103,7 @@
        forty floors entered and refused for a duplicate on line 19 is forty
        floors to re-enter. #}
     <textarea id="locations" name="locations" rows="8" spellcheck="false"
-      placeholder="Level 1 | Ground floor&#10;Level 2&#10;Level 3">{% if submitted and submitted.locations %}{{ submitted.locations }}{% else %}{% for loc in project.locations %}{{ loc.key }}{% if loc.name %} | {{ loc.name }}{% endif %}
+      placeholder="Level 1 | Ground floor&#10;Level 2&#10;Level 3">{% if submitted and submitted.get('locations') %}{{ submitted.get('locations') }}{% else %}{% for loc in project.locations %}{{ loc.key }}{% if loc.name %} | {{ loc.name }}{% endif %}
 {% endfor %}{% endif %}</textarea>
     <button type="submit">Save breakdown</button>
   </form>
@@ -131,8 +131,11 @@
           {{ trade.quantities | length }} location{{ "" if trade.quantities | length == 1 else "s" }}
           <details>
             <summary>quantities</summary>
+            {# Sorted by the location's own sequence, not by row order: a
+               take-off is read against the building, bottom to top, and the
+               database is under no obligation to return it that way. #}
             <p class="offenders">
-              {% for q in trade.quantities %}{{ q.location.key }}: {{ q.quantity }}{{ ", " if not loop.last }}{% endfor %}
+              {% for q in trade.quantities | sort(attribute="location.sequence") %}{{ q.location.key }}: {{ q.quantity }}{{ ", " if not loop.last }}{% endfor %}
             </p>
           </details>
           {% else %}—{% endif %}
@@ -157,28 +160,34 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {# `submitted` is the rejected form. Handing it back is the difference
        between naming line 37 of a forty-line take-off and making the planner
-       retype all forty of them. #}
+       retype all forty of them.
+
+       `.get(name, default)` rather than `submitted.name`: `submitted` is
+       whichever form failed, so after a *locations* error none of these fields
+       are in it, and attribute access would render Undefined as an empty
+       string -- silently replacing the documented defaults with blank boxes. #}
+    {% set form = submitted or {} %}
     <label for="trade-key">Key</label>
     <input type="text" id="trade-key" name="key" placeholder="Drywall" required
-      value="{{ submitted.key if submitted else '' }}">
+      value="{{ form.get('key', '') }}">
     <label for="trade-name">Name (optional)</label>
     <input type="text" id="trade-name" name="name" placeholder="Drywall and taping"
-      value="{{ submitted.name if submitted else '' }}">
+      value="{{ form.get('name', '') }}">
     <label for="trade-duration">Working days per location</label>
     <input type="number" id="trade-duration" name="duration_days" min="0"
-      value="{{ submitted.duration_days if submitted else 1 }}">
+      value="{{ form.get('duration_days', 1) }}">
     <label for="trade-rate">Production rate per day (optional)</label>
     <input type="number" id="trade-rate" name="rate" step="any" min="0"
-      value="{{ submitted.rate if submitted else '' }}">
+      value="{{ form.get('rate', '') }}">
     <label for="trade-quantities">Take-off (optional, needs a rate)</label>
     <textarea id="trade-quantities" name="quantities" rows="4" spellcheck="false"
-      placeholder="380&#10;Level 8 | 200">{{ submitted.quantities if submitted else '' }}</textarea>
+      placeholder="380&#10;Level 8 | 200">{{ form.get('quantities', '') }}</textarea>
     <label for="trade-buffer">Buffer after the previous trade (days)</label>
     <input type="number" id="trade-buffer" name="buffer_days"
-      value="{{ submitted.buffer_days if submitted else 0 }}">
+      value="{{ form.get('buffer_days', 0) }}">
     <label for="trade-crews">Crews</label>
     <input type="number" id="trade-crews" name="crews" min="1"
-      value="{{ submitted.crews if submitted else 1 }}">
+      value="{{ form.get('crews', 1) }}">
     <button type="submit">Add or update trade</button>
   </form>
   <p class="note">

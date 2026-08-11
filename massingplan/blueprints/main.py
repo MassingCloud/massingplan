@@ -326,15 +326,23 @@ def add_trade(project_id: str) -> Any:
             quantities_raw, [loc.key for loc in project.locations]
         )
         if problems:
-            return _linear_error(
-                project,
-                "The take-off could not be read: " + "; ".join(problems[:5]),
-            )
-        if quantities and rate is None:
+            return _linear_error(project, "The take-off could not be read: " + _listed(problems))
+        # `quantities_raw`, not `quantities`: the condition is what the planner
+        # typed, not what survived parsing. Keying it on the parsed dict means
+        # any future path that returns an empty one skips this check and stores
+        # a take-off nobody asked for -- which is how the empty-breakdown case
+        # got through in the first place.
+        if rate is None:
             return _linear_error(
                 project,
                 "Quantities need a production rate to become durations. Add a "
                 "rate, or remove the quantities and give a flat duration.",
+            )
+        if not quantities:
+            return _linear_error(
+                project,
+                "That take-off produced no quantities. Nothing was stored -- "
+                "check the location names against the breakdown above.",
             )
 
     with deps.committing() as session:
@@ -350,6 +358,18 @@ def add_trade(project_id: str) -> Any:
             quantities=quantities,
         )
     return redirect(url_for("main.project_linear", project_id=project.id))
+
+
+def _listed(problems: list[str], *, limit: int = 10) -> str:
+    """Join problems for display, saying so when there are more than fit.
+
+    A capped list that does not name its cap reads as the complete list, and
+    the planner fixes ten lines, resubmits, and is told about ten more.
+    """
+    shown = "; ".join(problems[:limit])
+    if len(problems) <= limit:
+        return shown
+    return f"{shown} -- and {len(problems) - limit} more"
 
 
 def _linear_error(project: Any, message: str) -> Any:

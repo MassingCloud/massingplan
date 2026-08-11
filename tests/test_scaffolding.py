@@ -106,14 +106,42 @@ def test_an_absent_limit_means_unmetered_not_denied() -> None:
 
 
 def test_selecting_a_missing_adapter_fails_with_an_actionable_message() -> None:
+    """`oidc` is no longer in this list, and that is the point of the list.
+
+    It was here until `services/identity/oidc.py` landed, and this test is what
+    noticed -- it went red on the commit that implemented the adapter, which is
+    the same job the deferred-capability guard does for `keywords`. The two
+    remaining entries are still seams with nothing behind them.
+    """
     for resolve, backend, hint in (
         (entitlement.resolve, "massing_cloud", "massingplan[oidc]"),
-        (identity.resolve, "oidc", "massingplan[oidc]"),
         (storage.resolve, "s3", "massingplan[s3]"),
     ):
         with pytest.raises(entitlement.AdapterUnavailableError) as excinfo:
             resolve(backend)
         assert hint in str(excinfo.value)
+
+
+def test_the_oidc_adapter_now_resolves_rather_than_apologising() -> None:
+    """The other direction, so "implemented" cannot silently become
+    "unimplemented again" through a botched merge.
+
+    Skipped in the `no-adapters` job, which deletes the adapter on purpose --
+    "it resolves" and "the app stands up without it" are both true and are
+    different claims. Found by running that job locally rather than by watching
+    it go red on CI.
+    """
+    pytest.importorskip("massingplan.services.identity.oidc")
+    pytest.importorskip("cryptography")
+    provider = identity.resolve(
+        "oidc",
+        issuer="https://idp.example.com",
+        client_id="massingplan",
+        client_secret="a-secret",
+        redirect_uri="https://plan.example.com/auth/sso/callback",
+    )
+    assert provider.name == "oidc"
+    assert "a-secret" not in str(provider.describe())
 
 
 def test_an_unknown_backend_name_lists_the_valid_ones() -> None:
@@ -123,16 +151,44 @@ def test_an_unknown_backend_name_lists_the_valid_ones() -> None:
 
 def test_no_optional_adapter_is_imported_by_a_default_install() -> None:
     """The `no-adapters` CI job deletes these files and re-runs the suite. This
-    is the same promise, checked in-process.
+    is the same promise, checked here.
+
+    **In a subprocess**, and that is the fix rather than a detail. It used to
+    read this process's `sys.modules`, which made it a test about what the rest
+    of the suite happened to have imported: the moment `test_oidc.py` existed
+    and imported the adapter it was testing, this went red -- while the
+    property it exists to protect, that *booting the app* pulls in no optional
+    adapter, was never violated at all.
+
+    A clean interpreter measures the actual claim, and cannot be broken by test
+    ordering.
     """
+    import subprocess
     import sys
 
-    leaked = [
-        name
-        for name in sys.modules
-        if name.endswith((".massing_cloud", ".oidc", ".s3")) and name.startswith("massingplan.")
-    ]
-    assert leaked == []
+    probe = (
+        "import sys;"
+        "from massingplan.app import create_app;"
+        "from massingplan.config import Settings;"
+        "create_app(Settings(env='testing', secret_key='k',"
+        " database_url='sqlite:///:memory:', rate_limit_enabled=False));"
+        "print(','.join(sorted(n for n in sys.modules"
+        " if n.startswith('massingplan.')"
+        " and n.endswith(('.massing_cloud', '.oidc', '.s3')))))"
+    )
+    finished = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    leaked = [name for name in finished.stdout.strip().split(",") if name]
+    assert leaked == [], (
+        f"creating the app imported {leaked}. An optional adapter reached on "
+        "the default path is a dependency nobody declared -- and the "
+        "`no-adapters` job, which deletes those files, will fail on it."
+    )
 
 
 def test_the_local_identity_provider_authenticates_by_key(tmp_path: Path) -> None:

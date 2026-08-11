@@ -12,5 +12,13 @@
   <input type="password" id="password" name="password" autocomplete="current-password" required>
   <button type="submit">Sign in</button>
 </form>
+{# Offered only when all four OIDC settings are present. A sign-in button that
+   leads somewhere half-configured is worse than no button: it fails at the
+   issuer, where the operator cannot see why. #}
+{% if sso_enabled %}
+<p class="note">
+  <a href="{{ url_for('auth.sso_start') }}">Sign in with your organisation's provider →</a>
+</p>
+{% endif %}
 <p class="note">No account? <a href="{{ url_for('auth.register_page') }}">Create one</a>.</p>
 {% endblock %}

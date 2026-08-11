@@ -87,6 +87,150 @@ def sign_out() -> Any:
     return redirect(url_for("main.index"))
 
 
+# -- single sign-on --------------------------------------------------------
+#
+# Three server-side secrets are parked in the session between the two legs, and
+# every one of them is checked on the way back: `state` against a forged
+# callback, `nonce` against a replayed id_token, `code_verifier` against an
+# intercepted code. They are removed whether the callback succeeds or fails --
+# a leftover state is a second chance for a replay.
+
+SSO_STATE = "sso_state"
+SSO_NONCE = "sso_nonce"
+SSO_VERIFIER = "sso_verifier"
+
+
+def _sso_settings() -> Any:
+    from flask import current_app
+
+    return current_app.extensions["massingplan_settings"]
+
+
+def _sso_provider() -> Any:
+    """The configured provider, or `None` when SSO is off.
+
+    Built per request rather than held on the app: the discovery cache lives on
+    the instance, and a process-wide one would be a cache nothing invalidates
+    when the operator changes the issuer.
+    """
+    settings = _sso_settings()
+    if not settings.sso_enabled:
+        return None
+    from ..services.identity.oidc import OidcProvider, OidcSettings
+
+    return OidcProvider(
+        OidcSettings(
+            issuer=settings.oidc_issuer,
+            client_id=settings.oidc_client_id,
+            client_secret=settings.oidc_client_secret,
+            redirect_uri=settings.oidc_redirect_uri,
+            require_tls=settings.oidc_require_tls,
+        )
+    )
+
+
+@bp.get("/sso")
+def sso_start() -> Any:
+    """Leg one: park the three secrets and send them to the issuer."""
+    from flask import session as flask_session
+
+    provider = _sso_provider()
+    if provider is None:
+        return render_template("auth/sign_in.html", error="SSO is not configured.", next=""), 404
+
+    from ..services.identity.oidc import OidcError
+
+    try:
+        request_ = provider.begin()
+    except OidcError as exc:
+        return render_template("auth/sign_in.html", error=str(exc), next=""), 502
+
+    flask_session[SSO_STATE] = request_.state
+    flask_session[SSO_NONCE] = request_.nonce
+    flask_session[SSO_VERIFIER] = request_.code_verifier
+    return redirect(request_.url)
+
+
+@bp.get("/sso/callback")
+def sso_callback() -> Any:
+    """Leg three: check everything, then provision or sign in.
+
+    The session values are popped *first*, so every path below -- success,
+    refusal, exception -- leaves nothing behind for a second attempt to reuse.
+    """
+    from flask import session as flask_session
+
+    provider = _sso_provider()
+    if provider is None:
+        return render_template("auth/sign_in.html", error="SSO is not configured.", next=""), 404
+
+    expected_state = flask_session.pop(SSO_STATE, "")
+    nonce = flask_session.pop(SSO_NONCE, "")
+    verifier = flask_session.pop(SSO_VERIFIER, "")
+
+    from ..services.identity.oidc import OidcError
+
+    if request.args.get("error"):
+        # The issuer refused. Its own description is not echoed: it is
+        # attacker-influenced text on a page we render.
+        return render_template(
+            "auth/sign_in.html", error="The identity provider refused the sign-in.", next=""
+        ), 400
+
+    try:
+        principal = provider.authenticate(
+            {
+                "code": request.args.get("code", ""),
+                "state": request.args.get("state", ""),
+                "expected_state": expected_state,
+                "nonce": nonce,
+                "code_verifier": verifier,
+            }
+        )
+    except OidcError as exc:
+        # The reason is shown: unlike a password failure, there is no account
+        # to enumerate here, and "the token had the wrong audience" is what an
+        # operator needs to fix their client configuration.
+        return render_template("auth/sign_in.html", error=str(exc), next=""), 400
+
+    if principal is None:
+        return render_template(
+            "auth/sign_in.html", error="That sign-in did not complete.", next=""
+        ), 400
+
+    with deps.committing() as session:
+        user = accounts.find_by_sso_subject(session, principal.subject)
+        if user is None:
+            user, organization_id = accounts.provision_sso_user(
+                session,
+                subject=principal.subject,
+                email=principal.email,
+                display_name=principal.display_name,
+                organization_name="",
+            )
+            accounts.audit(
+                session,
+                organization_id=organization_id,
+                action="auth.sso_provision",
+                actor_id=user.id,
+                actor_label=user.email,
+                summary="created an account from a verified SSO identity",
+            )
+        else:
+            membership = next(iter(user.memberships), None)
+            if membership is None:
+                raise AccountError("that account has no organisation")
+            organization_id = membership.organization_id
+        if not user.is_active:
+            return render_template(
+                "auth/sign_in.html", error="That account is disabled.", next=""
+            ), 403
+        signed_in_user, signed_in_org = user, organization_id
+
+    deps.sign_in(signed_in_user, signed_in_org)
+    return redirect(url_for("main.projects_list"))
+
+
 @bp.get("/register")
 def register_page() -> Any:
     return render_template("auth/register.html", error=None)

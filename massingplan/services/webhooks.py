@@ -384,54 +384,19 @@ class HttpTransport:
     def __call__(
         self, target: webhook_url.Target, body: bytes, headers: dict[str, str]
     ) -> Response:
-        import http.client
-        import socket
-        import ssl
-        from urllib.parse import urlsplit
+        # The pinning lives in `http_pinned` because the OIDC adapter needs the
+        # identical thing, and two copies of the code that closes the
+        # DNS-rebinding window is two places for the pin to go missing --
+        # silently, because an unpinned connection reaches the same server on
+        # every network that is not actually attacking you.
+        from . import http_pinned
 
-        path = urlsplit(target.url).path or "/"
-        query = urlsplit(target.url).query
-        if query:
-            path = f"{path}?{query}"
-
-        if target.is_tls:
-            connection: http.client.HTTPConnection = http.client.HTTPSConnection(
-                target.host, target.port, timeout=self.timeout, context=ssl.create_default_context()
-            )
-        else:
-            connection = http.client.HTTPConnection(target.host, target.port, timeout=self.timeout)
-
-        # Pin the socket to the address that was vetted, while leaving
-        # `connection.host` as the name -- which is what SNI and certificate
-        # validation use. Without this the stack resolves again here and can get
-        # a different, unchecked answer: the DNS-rebinding window.
-        #
-        # `_create_connection` is an instance attribute `http.client` assigns in
-        # `__init__`, not a method, which is what makes this replaceable. It is
-        # private, so its absence is treated as a hard failure rather than
-        # quietly falling back to an unpinned connect -- a silent fallback here
-        # is the check turning itself off on a Python upgrade.
-        pinned = target.address
-        if not hasattr(connection, "_create_connection"):  # pragma: no cover
-            raise RuntimeError(
-                "http.client no longer exposes _create_connection, so the "
-                "webhook connection cannot be pinned to the vetted address. "
-                "Refusing to deliver rather than resolving again unchecked."
-            )
-
-        def connect_to_pinned(
-            address: tuple[str, int], timeout: Any = None, source: Any = None
-        ) -> socket.socket:
-            return socket.create_connection((pinned, address[1]), timeout, source)
-
-        setattr(connection, "_create_connection", connect_to_pinned)  # noqa: B010
-
-        try:
-            connection.request("POST", path, body=body, headers=headers)
-            raw = connection.getresponse()
-            # Read a bounded amount. A subscriber returning a gigabyte is a
-            # denial of service against the drain, not a useful error message.
-            excerpt = raw.read(RESPONSE_EXCERPT_CHARS * 2).decode("utf-8", errors="replace")
-            return Response(status=raw.status, body=excerpt)
-        finally:
-            connection.close()
+        answer = http_pinned.request(
+            target,
+            method="POST",
+            body=body,
+            headers=headers,
+            timeout=self.timeout,
+            max_bytes=RESPONSE_EXCERPT_CHARS * 2,
+        )
+        return Response(status=answer.status, body=answer.text())

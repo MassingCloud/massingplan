@@ -229,6 +229,10 @@ def create_app(settings: Any = None) -> Any:
             "principal": deps.current_principal(),
             "request_id": g.get("request_id", ""),
             "Permission": Permission,
+            # All four OIDC settings, or the button is not offered. A sign-in
+            # link that leads somewhere half-configured fails at the issuer,
+            # where the operator cannot see why.
+            "sso_enabled": resolved.sso_enabled,
         }
 
     @app.get("/healthz")

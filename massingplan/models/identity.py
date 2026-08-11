@@ -99,10 +99,20 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
 
 class User(Base, TimestampMixin):
     __tablename__ = "users"
-    __table_args__ = (Index("ix_user_email", "email"),)
+    __table_args__ = (
+        Index("ix_user_email", "email"),
+        Index("ix_user_sso_subject", "sso_subject", unique=True),
+    )
 
     id: Mapped[str] = pk_column()
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    #: `issuer#sub` for a user who signs in through SSO, `None` for everyone
+    #: else. Matched on rather than the email address, because an email at an
+    #: identity provider is mutable and re-assignable -- somebody leaves, the
+    #: address goes to a new starter, and matching on it would hand them the
+    #: previous holder's projects. `sub` is the only claim OIDC promises is
+    #: stable, and the issuer prefix keeps two providers' user 1 apart.
+    sso_subject: Mapped[str | None] = mapped_column(String(512), nullable=True)
     display_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     #: argon2id. The algorithm and its parameters are encoded in the hash, so a
     #: parameter change re-hashes on next sign-in rather than needing a column.

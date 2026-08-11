@@ -38,9 +38,40 @@ class Settings:
         default_factory=lambda: int(os.getenv("MASSINGPLAN_SESSION_LIFETIME", 12 * 3600))
     )
 
+    # -- SSO. Off unless an issuer is set; there is no half-configured state. --
+    oidc_issuer: str = field(default_factory=lambda: os.getenv("MASSINGPLAN_OIDC_ISSUER", ""))
+    oidc_client_id: str = field(default_factory=lambda: os.getenv("MASSINGPLAN_OIDC_CLIENT_ID", ""))
+    oidc_client_secret: str = field(
+        default_factory=lambda: os.getenv("MASSINGPLAN_OIDC_CLIENT_SECRET", "")
+    )
+    oidc_redirect_uri: str = field(
+        default_factory=lambda: os.getenv("MASSINGPLAN_OIDC_REDIRECT_URI", "")
+    )
+    #: Relaxed only for a development IdP on localhost. An id_token over plain
+    #: HTTP is one anybody on the path can read and replay.
+    oidc_require_tls: bool = field(
+        default_factory=lambda: os.getenv("MASSINGPLAN_OIDC_REQUIRE_TLS", "1") != "0"
+    )
+
     @property
     def is_production(self) -> bool:
         return self.env == "production"
+
+    @property
+    def sso_enabled(self) -> bool:
+        """All four, or none.
+
+        A partially configured SSO is the dangerous state: a sign-in button
+        that leads somewhere broken, or worse, an exchange that skips a check
+        because the value it needed was empty. `oidc_settings()` refuses each
+        missing field by name, and this decides whether to offer it at all.
+        """
+        return bool(
+            self.oidc_issuer
+            and self.oidc_client_id
+            and self.oidc_client_secret
+            and self.oidc_redirect_uri
+        )
 
     def resolve_secret_key(self) -> str:
         if self.secret_key:

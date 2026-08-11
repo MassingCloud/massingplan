@@ -99,7 +99,25 @@ marketing document.
   drift window, and ten attempts per fifteen minutes. **API keys bypass it by
   design** — a CI job cannot type a code, so the factor protects the interactive
   session and not the machine credential.
-- **No SSO.** The OIDC adapter seam exists; its implementation does not.
+- **SSO is OIDC authorization-code with PKCE, and off unless all four settings
+  are present.** `MASSINGPLAN_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` and
+  `_REDIRECT_URI`; a partial configuration offers no button rather than a
+  button that fails at the issuer. The id_token is verified against the
+  issuer's JWKS by `kid` with **asymmetric algorithms only** — there is no HMAC
+  code path to confuse with an RSA public key, and no path where the header's
+  `alg` decides *whether* to verify. `iss`, `aud`, `azp` when there are several
+  audiences, `exp`, `iat` and the session's `nonce` are all checked, and the
+  discovery document must name the issuer it was fetched from.
+
+  What it deliberately does not do: no refresh tokens, no userinfo call, no
+  back-channel logout, and **no role or group mapping** — a `roles` claim is
+  the IdP's opinion about a different system. A first sign-in provisions into a
+  **new** organisation; joining an existing one is by invitation, for the same
+  reason self-service registration was changed. Users are matched on
+  `issuer#sub`, never on email, because an address at an IdP is reallocatable.
+
+  It has not been tested against a commercial IdP. The suite runs a fake issuer
+  signing real RSA tokens, which proves the checks and not the interop.
 - **Rate limiting is per-process.** Credential endpoints and the expensive
   compute endpoints are limited, but the store is in-memory: with four workers
   the effective limit is four times what was configured. The app logs a warning

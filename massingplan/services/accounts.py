@@ -179,6 +179,87 @@ def register(
     return user
 
 
+def find_by_sso_subject(session: Session, subject: str) -> User | None:
+    """The user this external identity belongs to, or `None`.
+
+    By subject, never by email: see `User.sso_subject` for why matching on the
+    address hands a reallocated mailbox somebody else's projects.
+    """
+    if not subject:
+        return None
+    return session.scalars(select(User).where(User.sso_subject == subject)).first()
+
+
+def provision_sso_user(
+    session: Session,
+    *,
+    subject: str,
+    email: str | None,
+    display_name: str,
+    organization_name: str,
+) -> tuple[User, str]:
+    """Create an account for a verified external identity, in a **new** tenant.
+
+    Never joins an existing organisation. A verified assertion that somebody
+    controls an email address at an identity provider is not a statement about
+    who they work for -- and this repo has already shipped the version of that
+    mistake where self-service registration made strangers owners of the
+    default organisation. Joining an existing tenant is by invitation, which is
+    a different route with a different check.
+
+    The password hash is a fresh random value nobody holds. Not empty, and not
+    a fixed sentinel: `attempt_sign_in` must be unable to match it, and it must
+    not be the *same* unmatched value across every SSO account.
+    """
+    if not subject:
+        raise AccountError("an SSO account needs a subject")
+    if find_by_sso_subject(session, subject) is not None:
+        raise AccountError("that external identity already has an account")
+
+    label = (email or display_name or subject).strip()
+    slug_source = (organization_name or label.split("@")[0] or "sso").lower()
+    slug = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in slug_source)[:80].strip("-")
+    slug = slug or "sso"
+
+    existing = session.scalars(select(Organization).where(Organization.slug == slug)).first()
+    if existing is not None:
+        # Suffixed rather than joined. Colliding on a name must not be a way to
+        # get into somebody else's tenant.
+        for n in range(2, 1000):
+            candidate = f"{slug}-{n}"[:80]
+            if (
+                session.scalars(select(Organization).where(Organization.slug == candidate)).first()
+                is None
+            ):
+                slug = candidate
+                break
+        else:
+            raise AccountError("cannot find a free organisation name")
+
+    organization = Organization(name=organization_name or label, slug=slug)
+    session.add(organization)
+    session.flush()
+
+    user = User(
+        email=(email or f"{subject}@sso.invalid").strip().lower()[:320],
+        display_name=display_name or label,
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+        sso_subject=subject,
+    )
+    session.add(user)
+    session.flush()
+    session.add(
+        Membership(
+            user_id=user.id,
+            organization_id=organization.id,
+            email=user.email,
+            role=Role.OWNER,
+        )
+    )
+    session.flush()
+    return user, organization.id
+
+
 def attempt_sign_in(session: Session, *, email: str, password: str) -> SignInResult:
     """Verify a credential, with lock-out and a constant-ish cost on failure."""
     email = email.strip().lower()

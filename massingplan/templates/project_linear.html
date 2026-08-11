@@ -99,9 +99,12 @@
   <form method="post" action="{{ url_for('main.set_locations', project_id=project.id) }}" class="uploader">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="locations">Location breakdown</label>
+    {# A rejected list is shown back as typed, not replaced by the stored one:
+       forty floors entered and refused for a duplicate on line 19 is forty
+       floors to re-enter. #}
     <textarea id="locations" name="locations" rows="8" spellcheck="false"
-      placeholder="Level 1 | Ground floor&#10;Level 2&#10;Level 3">{% for loc in project.locations %}{{ loc.key }}{% if loc.name %} | {{ loc.name }}{% endif %}
-{% endfor %}</textarea>
+      placeholder="Level 1 | Ground floor&#10;Level 2&#10;Level 3">{% if submitted and submitted.locations %}{{ submitted.locations }}{% else %}{% for loc in project.locations %}{{ loc.key }}{% if loc.name %} | {{ loc.name }}{% endif %}
+{% endfor %}{% endif %}</textarea>
     <button type="submit">Save breakdown</button>
   </form>
 </section>
@@ -115,7 +118,7 @@
   {% if project.linear_activities %}
   <table class="checks">
     <thead>
-      <tr><th>#</th><th>Trade</th><th>Per location</th><th>Buffer</th><th>Crews</th><th></th></tr>
+      <tr><th>#</th><th>Trade</th><th>Per location</th><th>Take-off</th><th>Buffer</th><th>Crews</th><th></th></tr>
     </thead>
     <tbody>
       {% for trade in project.linear_activities %}
@@ -123,6 +126,17 @@
         <td class="muted">{{ loop.index }}</td>
         <td><strong>{{ trade.key }}</strong>{% if trade.name and trade.name != trade.key %} <span class="muted">{{ trade.name }}</span>{% endif %}</td>
         <td>{% if trade.rate %}{{ trade.rate }}/day{% else %}{{ trade.duration_days }}d{% endif %}</td>
+        <td class="muted">
+          {% if trade.quantities %}
+          {{ trade.quantities | length }} location{{ "" if trade.quantities | length == 1 else "s" }}
+          <details>
+            <summary>quantities</summary>
+            <p class="offenders">
+              {% for q in trade.quantities %}{{ q.location.key }}: {{ q.quantity }}{{ ", " if not loop.last }}{% endfor %}
+            </p>
+          </details>
+          {% else %}—{% endif %}
+        </td>
         <td>{{ trade.buffer_days }}d</td>
         <td class="muted">{{ trade.crews }}</td>
         <td>
@@ -141,23 +155,45 @@
 
   <form method="post" action="{{ url_for('main.add_trade', project_id=project.id) }}" class="uploader">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {# `submitted` is the rejected form. Handing it back is the difference
+       between naming line 37 of a forty-line take-off and making the planner
+       retype all forty of them. #}
     <label for="trade-key">Key</label>
-    <input type="text" id="trade-key" name="key" placeholder="Drywall" required>
+    <input type="text" id="trade-key" name="key" placeholder="Drywall" required
+      value="{{ submitted.key if submitted else '' }}">
     <label for="trade-name">Name (optional)</label>
-    <input type="text" id="trade-name" name="name" placeholder="Drywall and taping">
+    <input type="text" id="trade-name" name="name" placeholder="Drywall and taping"
+      value="{{ submitted.name if submitted else '' }}">
     <label for="trade-duration">Working days per location</label>
-    <input type="number" id="trade-duration" name="duration_days" value="1" min="0">
-    <label for="trade-rate">Production rate per day (optional, needs quantities)</label>
-    <input type="number" id="trade-rate" name="rate" step="any" min="0">
+    <input type="number" id="trade-duration" name="duration_days" min="0"
+      value="{{ submitted.duration_days if submitted else 1 }}">
+    <label for="trade-rate">Production rate per day (optional)</label>
+    <input type="number" id="trade-rate" name="rate" step="any" min="0"
+      value="{{ submitted.rate if submitted else '' }}">
+    <label for="trade-quantities">Take-off (optional, needs a rate)</label>
+    <textarea id="trade-quantities" name="quantities" rows="4" spellcheck="false"
+      placeholder="380&#10;Level 8 | 200">{{ submitted.quantities if submitted else '' }}</textarea>
     <label for="trade-buffer">Buffer after the previous trade (days)</label>
-    <input type="number" id="trade-buffer" name="buffer_days" value="0">
+    <input type="number" id="trade-buffer" name="buffer_days"
+      value="{{ submitted.buffer_days if submitted else 0 }}">
     <label for="trade-crews">Crews</label>
-    <input type="number" id="trade-crews" name="crews" value="1" min="1">
+    <input type="number" id="trade-crews" name="crews" min="1"
+      value="{{ submitted.crews if submitted else 1 }}">
     <button type="submit">Add or update trade</button>
   </form>
   <p class="note">
+    <strong>Take-off.</strong> A bare number is the quantity for
+    <em>every</em> location — the same floor plate repeated, which is the common
+    case. <code>Level 8 | 200</code> overrides one of them, and later lines win,
+    so put the default first and the exceptions after it. Duration is the
+    quantity over the rate, rounded up, because two-thirds of a crew-day is a
+    day on site.
+  </p>
+  <p class="note">
     Re-entering an existing key updates that trade rather than adding a second
-    one with the same name.
+    one with the same name. Leaving the take-off box empty keeps whatever is
+    already stored; to stop using one, clear the <em>rate</em> and the flat
+    duration applies again.
   </p>
 </section>
 {% endblock %}

@@ -6,6 +6,7 @@ setting a baseline, and seeing where the time went against it.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from flask import Blueprint, redirect, render_template, request, url_for
@@ -231,9 +232,15 @@ def project_linear(project_id: str) -> Any:
         linear = projects.linear_schedule(project)
     except projects.ProjectError as exc:
         return render_template(
-            "project_linear.html", project=project, linear=None, error=str(exc)
+            "project_linear.html",
+            project=project,
+            linear=None,
+            error=str(exc),
+            submitted=None,
         ), 400
-    return render_template("project_linear.html", project=project, linear=linear, error=None)
+    return render_template(
+        "project_linear.html", project=project, linear=linear, error=None, submitted=None
+    )
 
 
 @bp.post("/projects/<project_id>/linear/locations")
@@ -257,13 +264,10 @@ def set_locations(project_id: str) -> Any:
 
     seen = {key for key, _ in entries}
     if len(seen) != len(entries):
-        return render_template(
-            "project_linear.html",
-            project=project,
-            linear=None,
-            error="Two locations share a key. Each one has to be distinct -- "
-            "the trades reference it.",
-        ), 400
+        return _linear_error(
+            project,
+            "Two locations share a key. Each one has to be distinct -- the trades reference it.",
+        )
 
     with deps.committing() as session:
         repo.replace_locations(session, project, entries)
@@ -286,12 +290,9 @@ def add_trade(project_id: str) -> Any:
     project = deps.load_project(project_id)
     key = request.form.get("key", "").strip()[:80]
     if not key:
-        return render_template(
-            "project_linear.html",
-            project=project,
-            linear=None,
-            error="A trade needs a key -- it is what the handover order refers to.",
-        ), 400
+        return _linear_error(
+            project, "A trade needs a key -- it is what the handover order refers to."
+        )
 
     def _int(field: str, default: int) -> int:
         try:
@@ -300,6 +301,42 @@ def add_trade(project_id: str) -> Any:
             return default
 
     rate_raw = request.form.get("rate", "").strip()
+    try:
+        rate = float(rate_raw) if rate_raw else None
+    except ValueError:
+        return _linear_error(project, f"{rate_raw!r} is not a production rate.")
+    # `not (rate > 0)` rather than `rate <= 0`, because `float("nan")` passes
+    # every ordered comparison and then raises inside `math.ceil` in the engine.
+    # Infinity is finite-checked for the same reason: it divides to zero days.
+    if rate is not None and not (rate > 0 and math.isfinite(rate)):
+        return _linear_error(
+            project,
+            f"{rate_raw!r} is not a production rate. It has to be a positive "
+            "number, or blank to use the flat duration instead.",
+        )
+
+    # An empty box leaves the stored take-off alone rather than wiping it: the
+    # form is used to correct a buffer or a name far more often than to remove
+    # quantities, and clearing them by omission would be a silent loss. To stop
+    # using a take-off, clear the *rate* -- the flat duration then applies.
+    quantities_raw = request.form.get("quantities", "").strip()
+    quantities = None
+    if quantities_raw:
+        quantities, problems = projects.parse_quantities(
+            quantities_raw, [loc.key for loc in project.locations]
+        )
+        if problems:
+            return _linear_error(
+                project,
+                "The take-off could not be read: " + "; ".join(problems[:5]),
+            )
+        if quantities and rate is None:
+            return _linear_error(
+                project,
+                "Quantities need a production rate to become durations. Add a "
+                "rate, or remove the quantities and give a flat duration.",
+            )
+
     with deps.committing() as session:
         repo.upsert_linear_activity(
             session,
@@ -307,11 +344,33 @@ def add_trade(project_id: str) -> Any:
             key=key,
             name=request.form.get("name", "").strip()[:200],
             duration_days=max(0, _int("duration_days", 1)),
-            rate=float(rate_raw) if rate_raw else None,
+            rate=rate,
             buffer_days=_int("buffer_days", 0),
             crews=max(1, _int("crews", 1)),
+            quantities=quantities,
         )
     return redirect(url_for("main.project_linear", project_id=project.id))
+
+
+def _linear_error(project: Any, message: str) -> Any:
+    """Re-render the location page with a reason, rather than a bare 400.
+
+    Two halves, and the second is the one that gets forgotten: the message says
+    which line was wrong, and `submitted` hands the form back what was typed.
+    Naming line 37 of a forty-line take-off and then clearing the box is not
+    materially better than not naming it.
+    """
+    try:
+        linear = projects.linear_schedule(project)
+    except projects.ProjectError:
+        linear = None
+    return render_template(
+        "project_linear.html",
+        project=project,
+        linear=linear,
+        error=message,
+        submitted=request.form,
+    ), 400
 
 
 @bp.post("/projects/<project_id>/linear/trades/<trade_key>/delete")

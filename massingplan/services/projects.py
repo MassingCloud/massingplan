@@ -8,6 +8,7 @@ back to be forgotten.
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date
 from typing import Any
@@ -369,3 +370,61 @@ def linear_schedule(project: Project, *, start: date | None = None) -> dict[str,
             for task in net_tasks
         ],
     }
+
+
+def parse_quantities(raw: str, location_keys: list[str]) -> tuple[dict[str, float], list[str]]:
+    """A take-off typed into a textarea, and everything wrong with it.
+
+    Two forms, mixable, because that is how a planner states it:
+
+    * a bare number on its own line -- the quantity for **every** location,
+      which is the common case (the same floor plate repeated);
+    * `Location | quantity` -- an override for one location, which is the other
+      common case ("380 a floor, except level 8 is 200").
+
+    A later line wins over an earlier one, so the default goes first and the
+    exceptions follow.
+
+    Returns `(quantities, problems)`. Problems are **returned, not swallowed**:
+    a quantity typed against a location that does not exist is a take-off the
+    planner believes is in the model and is not, and dropping it silently
+    produces a schedule that is wrong in exactly the direction they will not
+    check.
+    """
+    quantities: dict[str, float] = {}
+    problems: list[str] = []
+    known = set(location_keys)
+
+    for number, line in enumerate(raw.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        key, separator, amount = line.rpartition("|")
+        key, amount = key.strip(), amount.strip()
+
+        try:
+            value = float(amount)
+        except ValueError:
+            problems.append(f"line {number}: {amount!r} is not a number")
+            continue
+        # `float()` accepts "inf" and "nan", and both survive every plausible
+        # validation below -- `nan < 0` is False, so it is stored as a quantity
+        # and reaches `math.ceil` in the engine, where it raises. A 500 from
+        # typed input is a worse answer than a named line.
+        if not math.isfinite(value):
+            problems.append(f"line {number}: {amount!r} is not a finite quantity")
+            continue
+        if value < 0:
+            problems.append(f"line {number}: a negative quantity is not work")
+            continue
+
+        if not separator:
+            # A bare number: the default for every location.
+            quantities.update(dict.fromkeys(location_keys, value))
+            continue
+        if key not in known:
+            problems.append(f"line {number}: there is no location called {key!r}")
+            continue
+        quantities[key] = value
+
+    return quantities, problems

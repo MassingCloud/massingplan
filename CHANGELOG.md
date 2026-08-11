@@ -49,6 +49,31 @@ Keep a Changelog, Semantic Versioning. Grouped by the phase that produced it.
   CI job — the first attacks the app from the outside, the second pins
   complexity rather than stopwatch times.
 
+### Added — location-based scheduling
+
+- `core/locations.py`: trades flowing through an ordered set of locations with
+  **crew continuity** — a crew that starts does not stand down between
+  locations, which is the constraint a flow CPM structurally cannot express.
+  The line is shifted by the maximum over *every* location, so a faster
+  successor cannot overtake its predecessor somewhere in the middle of the
+  building while both ends still look clear.
+- Interference detection reports the **binding location** — where the buffer is
+  fully consumed and a slip is felt first — and whether the pair is converging,
+  plus the continuity cost in crew-days of float given up to keep crews whole.
+- A line-of-balance chart: time left to right, location up the page, one
+  polyline per trade whose slope is its production rate. Self-hosted SVG, same
+  CSP.
+- The location model is stored — `locations`, `linear_activities` and
+  `linear_quantities`, the last a table rather than a JSON column so a quantity
+  has a real foreign key to its location and goes with it when the level does.
+  Migration 0006.
+- A take-off on the trade form: a bare number is the quantity for every
+  location, `Level 8 | 200` overrides one, later lines win. Duration is
+  quantity over rate rounded up. A quantity typed against a location that is
+  not in the breakdown is refused with its line number rather than dropped,
+  because a silently dropped take-off is work the planner believes is in the
+  model and is not.
+
 ### Fixed — bugs the work surfaced
 
 - **Self-service registration made strangers owners of the default

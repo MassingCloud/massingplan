@@ -254,13 +254,31 @@ def set_locations(project_id: str) -> Any:
     """
     project = deps.load_project(project_id)
     raw = request.form.get("locations", "")
+    lines = raw.splitlines()
+    # Bounded before the loop, not after: `replace_locations` inserts a row per
+    # entry inside one transaction, so an unbounded textarea is an unbounded
+    # write. A 16 MB body of `L\n` is eight million inserts.
+    if len(lines) > projects.MAX_BREAKDOWN_LINES:
+        return _linear_error(
+            project,
+            f"That is {len(lines)} lines. A breakdown is one line per place in "
+            f"the building; this refuses more than {projects.MAX_BREAKDOWN_LINES}.",
+        )
+
     entries = []
-    for line in raw.splitlines():
+    for line in lines:
         line = line.strip()
         if not line:
             continue
         key, _, name = line.partition("|")
-        entries.append((key.strip()[:80], name.strip()[:200]))
+        key, name = key.strip()[:80], name.strip()[:200]
+        if not key:
+            return _linear_error(
+                project,
+                "A location needs a key -- that is what the take-off and the "
+                "trades reference. A line starting with `|` has none.",
+            )
+        entries.append((key, name))
 
     seen = {key for key, _ in entries}
     if len(seen) != len(entries):

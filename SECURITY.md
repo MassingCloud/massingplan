@@ -136,4 +136,13 @@ marketing document.
 - Attacks needing an already-compromised host or database.
 - Denial of service by uploading a pathologically large schedule. Bound the
   upload at your ingress; `MASSINGPLAN_MAX_UPLOAD_BYTES` defaults to 16MB.
+
+  The two location textareas are *not* left to that ceiling, because both do
+  work proportional to the line count: the take-off builds an error string per
+  bad line, and the breakdown inserts a row per entry inside one transaction.
+  A 16MB body would be 2.7 million error strings or 8 million inserts from one
+  authenticated `PROJECT_WRITE` user. Both are bounded at
+  `services.projects.MAX_BREAKDOWN_LINES` (2000) and refused whole rather than
+  truncated, since a take-off silently read down to line 2000 is a schedule
+  missing everything after it.
 - Social engineering of your users.

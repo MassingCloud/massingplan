@@ -162,6 +162,33 @@ def test_a_take_off_with_no_breakdown_to_apply_it_to_is_refused() -> None:
     assert "breakdown" in problems[0]
 
 
+def test_an_unbounded_take_off_is_refused_before_it_is_parsed() -> None:
+    """Work proportional to a request body nobody bounded.
+
+    The upload ceiling is 16 MB, and `x | y\\n` at that size is 2.7 million
+    lines, each producing a problem string. One authenticated user with
+    `PROJECT_WRITE` can make the server build tens of megabytes of error text
+    per request. Refused whole rather than truncated: a take-off read down to
+    line 2000 and scheduled is a schedule missing everything after it.
+    """
+    raw = "\n".join(f"L{n} | 100" for n in range(projects.MAX_BREAKDOWN_LINES + 1))
+    quantities, problems = projects.parse_quantities(raw, ["L1"])
+    assert quantities == {}
+    assert len(problems) == 1
+    assert str(projects.MAX_BREAKDOWN_LINES) in problems[0]
+
+
+def test_a_breakdown_at_the_limit_still_parses() -> None:
+    """The bound has to be a bound, not a moat: a real forty-storey take-off
+    must not land near it.
+    """
+    keys = [f"L{n}" for n in range(projects.MAX_BREAKDOWN_LINES)]
+    raw = "\n".join(f"{key} | 100" for key in keys)
+    quantities, problems = projects.parse_quantities(raw, keys)
+    assert problems == []
+    assert len(quantities) == projects.MAX_BREAKDOWN_LINES
+
+
 @pytest.mark.parametrize("word", ["nan", "inf", "-inf", "Infinity", "NaN"])
 def test_the_two_words_float_accepts_that_are_not_quantities(word: str) -> None:
     """`float()` parses these, and then they survive every ordered comparison --
@@ -395,6 +422,39 @@ def test_a_rate_that_is_not_a_positive_finite_number_is_refused(client, project_
         data={"key": "Drywall", "rate": rate, "quantities": "380"},
     )
     assert response.status_code == 400, f"{rate!r} got {response.status_code}"
+
+
+def test_an_unbounded_breakdown_is_refused_before_a_single_insert(client, project_id) -> None:  # type: ignore[no-untyped-def]
+    """`replace_locations` inserts a row per entry inside one transaction, so
+    an unbounded textarea is an unbounded write: a 16 MB body of `L\\n` is eight
+    million inserts by one authenticated user.
+    """
+    typed = "\n".join(f"L{n}" for n in range(projects.MAX_BREAKDOWN_LINES + 1))
+    response = client.post(f"/projects/{project_id}/linear/locations", data={"locations": typed})
+    assert response.status_code == 400
+    assert str(projects.MAX_BREAKDOWN_LINES) in response.get_data(as_text=True)
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        assert project.locations == [], "a refused breakdown must write nothing"
+
+
+def test_a_location_line_with_no_key_is_refused(client, project_id) -> None:  # type: ignore[no-untyped-def]
+    """`| Ground floor` partitions to an empty key, which stores a location the
+    take-off cannot name, the chart labels with nothing, and a second one of
+    collides with as a duplicate.
+    """
+    response = client.post(
+        f"/projects/{project_id}/linear/locations", data={"locations": "L1\n| Ground floor"}
+    )
+    assert response.status_code == 400
+    assert "needs a key" in response.get_data(as_text=True)
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        assert project.locations == []
 
 
 def test_a_rejected_breakdown_is_shown_back_as_typed(client, project_id) -> None:  # type: ignore[no-untyped-def]

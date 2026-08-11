@@ -372,6 +372,17 @@ def linear_schedule(project: Project, *, start: date | None = None) -> dict[str,
     }
 
 
+#: The most lines either location textarea will parse. A breakdown is one line
+#: per place in the building and a take-off is one line per place plus a few
+#: exceptions, so two thousand is far past any real project and far short of
+#: what a 16 MB request body can carry. Without a bound, one authenticated
+#: `PROJECT_WRITE` user can post a body at the upload ceiling and make the
+#: server build 2.7 million error strings -- or, on the breakdown, attempt 8
+#: million row inserts in a single transaction. Both are the same defect: work
+#: proportional to a request body nobody bounded.
+MAX_BREAKDOWN_LINES = 2000
+
+
 def parse_quantities(raw: str, location_keys: list[str]) -> tuple[dict[str, float], list[str]]:
     """A take-off typed into a textarea, and everything wrong with it.
 
@@ -395,7 +406,17 @@ def parse_quantities(raw: str, location_keys: list[str]) -> tuple[dict[str, floa
     problems: list[str] = []
     known = set(location_keys)
 
-    for number, line in enumerate(raw.splitlines(), start=1):
+    lines = raw.splitlines()
+    if len(lines) > MAX_BREAKDOWN_LINES:
+        # Refused whole rather than truncated: a take-off read down to line 2000
+        # and scheduled is a schedule missing everything after it, which is the
+        # silent-drop failure this function exists to refuse.
+        return {}, [
+            f"that is {len(lines)} lines; a take-off is one per location and "
+            f"this refuses more than {MAX_BREAKDOWN_LINES}"
+        ]
+
+    for number, line in enumerate(lines, start=1):
         line = line.strip()
         if not line:
             continue

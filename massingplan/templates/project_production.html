@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}{{ project.code }} — production control — massingplan{% endblock %}
+{% block content %}
+<h1>{{ project.code }} — production control</h1>
+<p class="note">
+  <a href="{{ url_for('main.project_detail', project_id=project.id) }}">← the schedule</a>
+  ·
+  <a href="{{ url_for('main.project_linear', project_id=project.id) }}">line of balance</a>
+</p>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<p class="lede">
+  The Gantt says when work <em>can</em> happen. This says what was promised and
+  whether it happened — and the gap between those two is where a job is lost.
+</p>
+
+{% if reliability %}
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Mean PPC</span>
+    <span class="tile-value">
+      {% if reliability.mean_ppc is not none %}{{ (reliability.mean_ppc * 100) | round(0, 'floor') | int }}%{% else %}—{% endif %}
+    </span>
+    <span class="tile-sub">across {{ reliability.measurable_weeks }} measurable weeks</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Weeks planned</span>
+    <span class="tile-value">{{ reliability.weeks | length }}</span>
+    <span class="tile-sub">{{ reliability.weeks | length - reliability.measurable_weeks }} not yet measurable</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Live constraints</span>
+    <span class="tile-value">{{ constraints | length }}</span>
+    <span class="tile-sub">{{ constraints | selectattr('overdue_days', 'gt', 0) | list | length }} overdue</span>
+  </div>
+</section>
+
+<section>
+  <h2>Plan reliability</h2>
+  <p class="note">
+    <strong>PPC is commitments met over commitments made</strong>, per week. It
+    measures the reliability of the promise, not the volume of work — a crew
+    that did twice what it promised is at 100%, because promising badly is the
+    thing being measured. A week with anything unassessed reads
+    <em>unmeasurable</em> rather than being scored on the part that was
+    answered.
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>Week</th><th>Committed</th><th>Met</th><th>PPC</th><th>Reading</th></tr>
+    </thead>
+    <tbody>
+      {% for week in reliability.weeks %}
+      <tr>
+        <td><a href="{{ url_for('main.project_production', project_id=project.id, week=week.week_starting) }}">{{ week.week_starting }}</a></td>
+        <td>{{ week.committed }}</td>
+        <td>{{ week.completed }}</td>
+        <td>
+          {% if week.ppc is none %}
+            <span class="pill pill-warn">unmeasurable</span>
+          {% elif week.ppc >= 0.85 %}
+            <span class="pill pill-pass">{{ (week.ppc * 100) | round(0, 'floor') | int }}%</span>
+          {% else %}
+            <span class="pill pill-fail">{{ (week.ppc * 100) | round(0, 'floor') | int }}%</span>
+          {% endif %}
+        </td>
+        <td class="muted">
+          {% if week.ppc is none and week.committed == 0 %}Nothing was planned, so there is no reliability to report.
+          {% elif week.ppc is none %}{{ week.unassessed }} commitment{{ '' if week.unassessed == 1 else 's' }} were never assessed.
+          {% elif week.ppc >= 0.85 %}A reliable week.
+          {% else %}{% for reason, count in week.variance.items() %}{{ count }} × {{ reason.replace('_', ' ') }}{{ ', ' if not loop.last }}{% endfor %}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if reliability.top_reasons %}
+<section>
+  <h2>Why commitments were missed</h2>
+  <p class="note">
+    The half of PPC that can be acted on. A percentage tells you there is a
+    problem; this tells you which one.
+  </p>
+  <table class="checks">
+    <thead><tr><th>Reason</th><th>Missed commitments</th></tr></thead>
+    <tbody>
+      {% for entry in reliability.top_reasons %}
+      <tr>
+        <td>{{ entry.reason.replace('_', ' ') }}</td>
+        <td>{{ entry.count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if reliability.issues %}
+<section>
+  <h2>What makes the measurement weaker <span class="muted">({{ reliability.issues | length }})</span></h2>
+  <p class="note">These are about the measuring, not the building — and none of them is visible in the number itself.</p>
+  <table class="checks">
+    <thead><tr><th>Severity</th><th>Code</th><th>What</th><th>What was done</th></tr></thead>
+    <tbody>
+      {% for issue in reliability.issues %}
+      <tr>
+        <td><span class="pill pill-{{ 'fail' if issue.severity == 'error' else ('warn' if issue.severity == 'warning' else 'pass') }}">{{ issue.severity }}</span></td>
+        <td><code>{{ issue.code }}</code></td>
+        <td>{{ issue.message }}</td>
+        <td class="muted">{{ issue.action }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endif %}
+
+{% if constraints %}
+<section>
+  <h2>Constraint log <span class="muted">({{ constraints | length }} live)</span></h2>
+  <p class="note">
+    The make-ready agenda, oldest broken promise first. Every entry names who
+    owns it and what it blocks — “three constraints outstanding” is not
+    something anybody can act on.
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>Kind</th><th>What</th><th>Owner</th><th>Promised</th><th>Blocks</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for c in constraints %}
+      <tr class="{{ 'status-fail' if c.overdue_days > 0 else '' }}">
+        <td>{{ c.kind.replace('_', ' ') }}</td>
+        <td>{{ c.description }}</td>
+        <td>{{ c.owner }}</td>
+        <td>
+          {{ c.promised_by }}
+          {% if c.overdue_days > 0 %}<span class="pill pill-fail">{{ c.overdue_days }}d late</span>{% endif %}
+        </td>
+        <td class="muted">{{ c.blocks }}</td>
+        <td>
+          <form method="post" action="{{ url_for('main.clear_constraint', project_id=project.id, constraint_id=c.id) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="linkish">clear</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section>
+  <h2>Week of {{ week_starting }}</h2>
+  {% if plan and plan.commitments %}
+  <table class="checks">
+    <thead>
+      <tr><th>#</th><th>Work</th><th>Crew</th><th>Blocked by</th><th>Outcome</th></tr>
+    </thead>
+    <tbody>
+      {% for c in plan.commitments %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td>
+          <strong>{{ c.description }}</strong>
+          {% if c.activity_code %} <span class="muted">{{ c.activity_code }}</span>{% endif %}
+        </td>
+        <td>{{ c.crew }}</td>
+        <td class="muted">
+          {% set live = c.constraints | rejectattr('removed_on') | list %}
+          {% if live %}{% for x in live %}{{ x.kind.replace('_', ' ') }}{{ ', ' if not loop.last }}{% endfor %}{% else %}—{% endif %}
+        </td>
+        <td>
+          {% if c.completed is none %}
+          <form method="post" action="{{ url_for('main.assess_commitment', project_id=project.id, commitment_id=c.id, week=week_starting) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" name="completed" value="yes" class="linkish">met</button>
+            <select name="reason" aria-label="reason it was missed">
+              {% for r in reasons %}<option value="{{ r.value }}">{{ r.value.replace('_', ' ') }}</option>{% endfor %}
+            </select>
+            <button type="submit" name="completed" value="no" class="linkish">missed</button>
+          </form>
+          {% elif c.completed %}
+          <span class="pill pill-pass">met</span>
+          {% else %}
+          <span class="pill pill-fail">{{ (c.reason or 'not recorded').replace('_', ' ') }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">Nothing committed for this week yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('main.add_commitment', project_id=project.id, week=week_starting) }}" class="uploader">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="description">What is being promised</label>
+    <input type="text" id="description" name="description" required
+           placeholder="Frame level 3, grid A–F"
+           value="{{ submitted.get('description', '') if submitted else '' }}">
+    <label for="crew">Crew making the promise</label>
+    <input type="text" id="crew" name="crew" required placeholder="Steel gang"
+           value="{{ submitted.get('crew', '') if submitted else '' }}">
+    <label for="activity_code">Activity code (optional)</label>
+    <input type="text" id="activity_code" name="activity_code" placeholder="A1030"
+           value="{{ submitted.get('activity_code', '') if submitted else '' }}">
+
+    <p class="note">
+      A commitment with a live constraint is <strong>refused, not warned
+      about</strong> — that refusal is the method. Naming the blocker here does
+      not store it: the whole commitment is rejected, and the message tells you
+      what stopped it. Clear the blocker in the world, then promise the work.
+      <em>Recording constraints against work already committed</em> — which is
+      what fills the log above — comes in through the API, not this form.
+    </p>
+    <label for="constraint_kind">Blocked by (optional — this will refuse the commitment)</label>
+    <select id="constraint_kind" name="constraint_kind">
+      <option value="">nothing — it is make-ready</option>
+      {% for k in kinds %}<option value="{{ k.value }}">{{ k.value.replace('_', ' ') }}</option>{% endfor %}
+    </select>
+    <label for="constraint_description">What is blocking it</label>
+    <input type="text" id="constraint_description" name="constraint_description"
+           placeholder="Steel delivery for grid A–F">
+    <label for="constraint_owner">Who is clearing it</label>
+    <input type="text" id="constraint_owner" name="constraint_owner" placeholder="Procurement">
+    <label for="constraint_promised_by">By when</label>
+    <input type="date" id="constraint_promised_by" name="constraint_promised_by">
+
+    <button type="submit">Add to the week</button>
+  </form>
+</section>
+{% endblock %}

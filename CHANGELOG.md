@@ -96,6 +96,30 @@ Keep a Changelog, Semantic Versioning. Grouped by the phase that produced it.
   work is on level 7 — only about what to do with it. `/projects/<id>/takt`
   puts them side by side on one model.
 
+### Added — Last Planner production control
+
+- `core/lastplanner.py`: commitments, the constraint log, and PPC. A different
+  question from the rest of the package — the Gantt says when work *can*
+  happen, this says what was promised and whether it happened.
+- **PPC is built to be hard to game**, because every way of gaming it makes the
+  number go up while the site gets worse. The denominator is frozen when the
+  week is committed; partial completion is not partial credit; an unassessed
+  commitment makes the week *unmeasurable* rather than perfect (the same
+  tri-state as a skipped DCMA check); and a missed commitment without a reason
+  is refused outright.
+- **Only make-ready work can be committed** — refused, not warned about. A
+  system that warns gets used to commit constrained work every week, because by
+  the third week the warning is wallpaper.
+- A constraint carries an owner and a promised date, both required, and a
+  removal *date* rather than a flag: cleared next Friday must not make this
+  Monday's plan look ready.
+- No lifetime average PPC in the UI's headline: `trend()` returns the series,
+  because five good weeks and one collapse is a project with a problem in week
+  six, and 72% shows nothing.
+- Stored as three tables (migration 0008), with the week as a row rather than a
+  date on each commitment — that is what makes the denominator freezable.
+  `/projects/<id>/production`.
+
 ### Fixed — bugs the work surfaced
 
 - **Self-service registration made strangers owners of the default

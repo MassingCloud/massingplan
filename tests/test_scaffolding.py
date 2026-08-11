@@ -346,15 +346,20 @@ def test_assess_exits_non_zero_when_a_check_fails(tmp_path: Path) -> None:
 #: Capabilities SPEC.md defers to P11+. None of them is implemented, so none may
 #: be advertised. `last planner` and `line of balance` were both in `keywords`
 #: while no line of either existed.
-DEFERRED_CAPABILITIES = {
-    "last planner": ("last.planner", "make.ready", "weekly work plan", "pull plan"),
-}
+DEFERRED_CAPABILITIES: dict[str, tuple[str, ...]] = {}
+# Empty, and kept rather than deleted.
+#
 # `line of balance` and `location based` were here until `core/locations.py`
-# landed, and `takt` until `core/takt.py` did. The parametrised test below is
-# what noticed both times: it failed on the commit that built the feature,
-# naming the keyword list, so the advertisement got added deliberately rather
-# than the capability shipping unadvertised forever. It has now fired in both
-# directions twice, which is the whole reason it is written this way.
+# landed, `takt` until `core/takt.py` did, and `last planner` until
+# `core/lastplanner.py` did. The parametrised test below fired on all three
+# commits, naming the keyword list, so each advertisement got added
+# deliberately rather than the capability shipping unadvertised.
+#
+# The dict staying here is the point: the next deferred feature goes in it, and
+# the guard starts working again the moment it does. Deleting the machinery
+# because it currently has nothing to guard is how the next one ships either
+# unadvertised or advertised-and-absent, which are the two failures this repo
+# has now made four times between them.
 
 
 def test_no_keyword_advertises_something_that_is_not_built() -> None:

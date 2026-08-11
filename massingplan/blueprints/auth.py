@@ -14,7 +14,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 
 from ..models import Organization
 from ..models.identity import Role
-from ..services import accounts, mfa
+from ..services import accounts, identity, mfa
 from ..services.accounts import AccountError, SignInOutcome
 from . import deps
 
@@ -109,6 +109,10 @@ def _sso_settings() -> Any:
 def _sso_provider() -> Any:
     """The configured provider, or `None` when SSO is off.
 
+    Through `identity.resolve` rather than importing the adapter, which is what
+    import-linter enforces and what makes a deployment missing that adapter
+    fail with an install hint instead of an `ImportError` at request time.
+
     Built per request rather than held on the app: the discovery cache lives on
     the instance, and a process-wide one would be a cache nothing invalidates
     when the operator changes the issuer.
@@ -116,16 +120,13 @@ def _sso_provider() -> Any:
     settings = _sso_settings()
     if not settings.sso_enabled:
         return None
-    from ..services.identity.oidc import OidcProvider, OidcSettings
-
-    return OidcProvider(
-        OidcSettings(
-            issuer=settings.oidc_issuer,
-            client_id=settings.oidc_client_id,
-            client_secret=settings.oidc_client_secret,
-            redirect_uri=settings.oidc_redirect_uri,
-            require_tls=settings.oidc_require_tls,
-        )
+    return identity.resolve(
+        "oidc",
+        issuer=settings.oidc_issuer,
+        client_id=settings.oidc_client_id,
+        client_secret=settings.oidc_client_secret,
+        redirect_uri=settings.oidc_redirect_uri,
+        require_tls=settings.oidc_require_tls,
     )
 
 
@@ -138,11 +139,9 @@ def sso_start() -> Any:
     if provider is None:
         return render_template("auth/sign_in.html", error="SSO is not configured.", next=""), 404
 
-    from ..services.identity.oidc import OidcError
-
     try:
         request_ = provider.begin()
-    except OidcError as exc:
+    except identity.IdentityError as exc:
         return render_template("auth/sign_in.html", error=str(exc), next=""), 502
 
     flask_session[SSO_STATE] = request_.state
@@ -168,8 +167,6 @@ def sso_callback() -> Any:
     nonce = flask_session.pop(SSO_NONCE, "")
     verifier = flask_session.pop(SSO_VERIFIER, "")
 
-    from ..services.identity.oidc import OidcError
-
     if request.args.get("error"):
         # The issuer refused. Its own description is not echoed: it is
         # attacker-influenced text on a page we render.
@@ -187,7 +184,7 @@ def sso_callback() -> Any:
                 "code_verifier": verifier,
             }
         )
-    except OidcError as exc:
+    except identity.IdentityError as exc:
         # The reason is shown: unlike a password failure, there is no account
         # to enumerate here, and "the token had the wrong audience" is what an
         # operator needs to fix their client configuration.

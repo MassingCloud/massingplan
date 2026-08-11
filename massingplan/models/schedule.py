@@ -39,6 +39,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.constraints import ConstraintType
 from ..core.network import ActivityKind, LagCalendar, ProgressMode, RelationType
 from .base import Base, TimestampMixin, date_column, days_column, org_column, pk_column
+from .lastplanner import WeeklyPlanRow
 from .locations import LinearActivity, ProjectLocation
 
 
@@ -173,6 +174,17 @@ class Project(Base, TimestampMixin):
         lazy="selectin",
         passive_deletes=True,
         order_by="LinearActivity.sequence",
+    )
+    # `lazy="select"`, unlike every other collection on this model. A project
+    # accumulates one weekly plan a week for the life of the job, so eager
+    # loading them would pull two years of production-control history onto the
+    # Gantt page -- which is the shape of the N+1 the headline columns were
+    # added to fix, in the other direction.
+    weekly_plans: Mapped[list[WeeklyPlanRow]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="WeeklyPlanRow.week_starting",
     )
 
     @property

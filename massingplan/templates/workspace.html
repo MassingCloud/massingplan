@@ -129,6 +129,11 @@
   — where the crews are, and where they close on each other. A Gantt cannot show that.
 </p>
 <p class="note">
+  <a href="{{ url_for('main.project_production', project_id=project.id) }}">Production control →</a>
+  — what was promised this week and whether it happened. PPC measures the
+  reliability of the plan, which is the thing a Gantt cannot tell you.
+</p>
+<p class="note">
   <a href="{{ url_for('main.project_takt', project_id=project.id) }}">Takt plan →</a>
   — the same work on a fixed rhythm instead, and what the rhythm costs in idle
   crew-days. The two read off one take-off, so they can be compared rather than

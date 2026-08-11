@@ -57,10 +57,10 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from .. import webhook_url
-from .base import IdentityProvider, Principal
+from .base import IdentityError, IdentityProvider, Principal
 
 
-class OidcError(RuntimeError):
+class OidcError(IdentityError):
     """The exchange or the token failed a check. Never partially authenticated."""
 
 

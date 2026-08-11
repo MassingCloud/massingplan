@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..entitlement.base import AdapterUnavailableError
-from .base import IdentityProvider, Principal
+from .base import IdentityError, IdentityProvider, Principal
 from .local import LocalIdentityProvider
 
 __all__ = [
     "AdapterUnavailableError",
+    "IdentityError",
     "IdentityProvider",
     "LocalIdentityProvider",
     "Principal",

@@ -12,9 +12,10 @@ from typing import Any
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from ..api import errors, schedules
+from ..core import lastplanner
 from ..models.identity import Permission
 from ..models.webhooks import WebhookEvent
-from ..services import accounts, mfa, projects, webhooks
+from ..services import accounts, mfa, production, projects, webhooks
 from ..services import repository as repo
 from ..services.demo import demo_payload
 from . import deps
@@ -268,6 +269,183 @@ def project_takt(project_id: str) -> Any:
     except (projects.ProjectError, ValueError) as exc:
         return render_template("project_takt.html", project=project, takt=None, error=str(exc)), 400
     return render_template("project_takt.html", project=project, takt=takt, error=None)
+
+
+# -- production control ----------------------------------------------------
+
+
+@bp.get("/projects/<project_id>/production")
+@deps.login_required
+def project_production(project_id: str) -> Any:
+    """Weekly work plans, the constraint log, and PPC over time.
+
+    A different question from every other page here. The Gantt says when work
+    *can* happen; this says what was promised and whether it happened, and the
+    gap between the two is where a job is actually lost.
+    """
+    project = deps.load_project(project_id)
+    week = _requested_week()
+    return render_template(
+        "project_production.html",
+        project=project,
+        week_starting=week,
+        plan=production.plan_for(project, week),
+        reliability=production.reliability(project),
+        constraints=production.open_constraints(project),
+        reasons=list(lastplanner.VarianceReason),
+        kinds=list(lastplanner.ConstraintKind),
+        error=None,
+    )
+
+
+def _requested_week() -> Any:
+    """The week from the query string, snapped to its Monday.
+
+    Snapped rather than refused: somebody linking to a Wednesday means that
+    week, and a 400 for it would be pedantry. A week that cannot be parsed at
+    all falls back to this one.
+    """
+    from datetime import date as _date
+
+    raw = request.args.get("week", "").strip()
+    try:
+        day = _date.fromisoformat(raw) if raw else _date.today()
+    except ValueError:
+        day = _date.today()
+    return production.monday_of(day)
+
+
+def _production_error(project: Any, message: str) -> Any:
+    """Re-render with a reason, and hand the form back what was typed."""
+    week = _requested_week()
+    return render_template(
+        "project_production.html",
+        project=project,
+        week_starting=week,
+        plan=production.plan_for(project, week),
+        reliability=production.reliability(project),
+        constraints=production.open_constraints(project),
+        reasons=list(lastplanner.VarianceReason),
+        kinds=list(lastplanner.ConstraintKind),
+        error=message,
+        submitted=request.form,
+    ), 400
+
+
+@bp.post("/projects/<project_id>/production/commit")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def add_commitment(project_id: str) -> Any:
+    """Promise one piece of work for a week.
+
+    Refused if it is not make-ready. That refusal is the method: a system that
+    merely warns gets used to commit constrained work every week, because by
+    the third week the warning is wallpaper.
+    """
+    from datetime import date as _date
+
+    project = deps.load_project(project_id)
+    week = _requested_week()
+
+    constraints: list[dict[str, Any]] = []
+    kind = request.form.get("constraint_kind", "").strip()
+    if kind:
+        promised_raw = request.form.get("constraint_promised_by", "").strip()
+        try:
+            promised = _date.fromisoformat(promised_raw) if promised_raw else week
+        except ValueError:
+            return _production_error(project, f"{promised_raw!r} is not a date.")
+        constraints.append(
+            {
+                "kind": kind,
+                "description": request.form.get("constraint_description", "").strip(),
+                "owner": request.form.get("constraint_owner", "").strip(),
+                "promised_by": promised,
+            }
+        )
+
+    try:
+        with deps.committing() as session:
+            plan = production.open_week(session, project, week)
+            production.add_commitment(
+                session,
+                plan,
+                description=request.form.get("description", ""),
+                crew=request.form.get("crew", ""),
+                activity_code=request.form.get("activity_code", ""),
+                constraints=constraints,
+            )
+    except (lastplanner.LastPlannerError, ValueError) as exc:
+        return _production_error(project, str(exc))
+    return redirect(
+        url_for("main.project_production", project_id=project.id, week=week.isoformat())
+    )
+
+
+@bp.post("/projects/<project_id>/production/<commitment_id>/assess")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def assess_commitment(project_id: str, commitment_id: str) -> Any:
+    """Record whether a promise was met, and why not.
+
+    The reason is required when it was not. Defaulting it is how a variance log
+    becomes a hundred rows of "other" and PPC becomes a number nobody can act
+    on.
+    """
+    project = deps.load_project(project_id)
+    week = _requested_week()
+    try:
+        with deps.committing() as session:
+            row = next(
+                (
+                    c
+                    for plan in project.weekly_plans
+                    for c in plan.commitments
+                    if c.id == commitment_id
+                ),
+                None,
+            )
+            if row is None:
+                raise errors.NotFound("no such commitment")
+            production.assess_commitment(
+                session,
+                row,
+                completed=request.form.get("completed") == "yes",
+                reason=request.form.get("reason") or None,
+            )
+    except (lastplanner.LastPlannerError, ValueError) as exc:
+        return _production_error(project, str(exc))
+    return redirect(
+        url_for("main.project_production", project_id=project.id, week=week.isoformat())
+    )
+
+
+@bp.post("/projects/<project_id>/production/constraints/<constraint_id>/clear")
+@deps.require_permission(Permission.PROJECT_WRITE)
+def clear_constraint(project_id: str, constraint_id: str) -> Any:
+    """Mark a constraint cleared, on a stated day."""
+    from datetime import date as _date
+
+    project = deps.load_project(project_id)
+    raw = request.form.get("removed_on", "").strip()
+    try:
+        removed = _date.fromisoformat(raw) if raw else _date.today()
+    except ValueError:
+        return _production_error(project, f"{raw!r} is not a date.")
+
+    with deps.committing() as session:
+        row = next(
+            (
+                c
+                for plan in project.weekly_plans
+                for commitment in plan.commitments
+                for c in commitment.constraints
+                if c.id == constraint_id
+            ),
+            None,
+        )
+        if row is None:
+            raise errors.NotFound("no such constraint")
+        production.clear_constraint(session, row, removed_on=removed)
+    return redirect(url_for("main.project_production", project_id=project.id))
 
 
 @bp.post("/projects/<project_id>/linear/locations")

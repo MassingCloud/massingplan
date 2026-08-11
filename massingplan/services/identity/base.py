@@ -11,6 +11,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
+class IdentityError(RuntimeError):
+    """A sign-in that failed a check at the provider.
+
+    Declared on the *base* rather than in an implementation so a caller can
+    catch it without importing the implementation -- which is the whole point
+    of the seam, and which import-linter enforces: `blueprints` reaching
+    straight into `identity.oidc` would mean a deployment missing that adapter
+    got an `ImportError` at request time instead of the actionable message
+    `resolve()` raises.
+    """
+
+
 @dataclass(frozen=True)
 class Principal:
     """An authenticated caller. Not a user record -- a claim about one."""

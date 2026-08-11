@@ -75,32 +75,49 @@ def test_crews_for_is_a_ceiling_on_whole_crews(work: float, takt: int, expected:
 
 
 @pytest.mark.parametrize(
-    ("items", "each", "takt", "expected"),
+    ("quantity", "rate", "takt", "expected", "is_trap"),
     [
-        # 25 rooms at 0.2 crew-days each. The sum is 5.000000000000002, and a
-        # bare `ceil` of that over a 5-day takt hires TWO crews where one is
-        # right -- double the labour bill, from a number that is 5 in every
-        # sense a planner cares about.
-        (25, 0.2, 5, 1),
-        (50, 0.3, 5, 3),  # 15.000000000000014 -> 3, not 4
-        (25, 0.4, 5, 2),  # 10.000000000000004 -> 2, not 3
-        # And the epsilon must not swallow a real excess: one extra room over
-        # the boundary genuinely needs the next crew.
-        (26, 0.2, 5, 2),
+        # 21 units at 0.7 a day is 30.000000000000004 crew-days. Over a 5-day
+        # takt that is 6.000000000000001, and a bare `ceil` hires SEVEN crews
+        # where six will do -- a sixth of a trade's labour bill, from a number
+        # that is 6 in every sense a planner cares about.
+        (21, 0.7, 5, 6, True),
+        (21, 0.7, 10, 3, True),  # 3.0000000000000004 -> 3, not 4
+        (21, 0.35, 5, 12, True),  # 12.000000000000002 -> 12, not 13
+        # The control: genuinely over the boundary, and nowhere near it, so the
+        # tolerance is not just rounding everything down.
+        (22, 0.7, 5, 7, False),
     ],
 )
 def test_the_epsilon_stops_a_representation_error_hiring_a_crew(
-    items: int, each: float, takt: int, expected: int
+    quantity: float, rate: float, takt: int, expected: int, is_trap: bool
 ) -> None:
-    """Work content is a *sum* of measured items, and float sums drift upward.
+    """Work content is `quantity / rate`, and that division drifts upward.
 
-    These four cases were found by searching realistic take-off arithmetic for
-    sums that land a few parts in 10^15 above an integer; the first three do,
-    and the fourth is the control that proves the tolerance is not just
-    rounding everything down.
+    **Division rather than summation, and that is not a cosmetic choice.** The
+    first version of this test built the work content with `sum([0.2] * 25)`,
+    which is `5.000000000000002` on Python 3.11 and exactly `5.0` on 3.12 --
+    Python 3.12 made `sum()` use compensated (Neumaier) summation. The test
+    passed locally on 3.11 and failed on CI's 3.12 and 3.13, and what caught it
+    was the guard assertion below refusing to claim a drift that was not there.
+
+    IEEE-754 division is exactly rounded and identical on every version, so
+    these cases are stable. They also match where the number actually comes
+    from: `locations.work_content` divides a take-off by a production rate.
     """
-    work = sum([each] * items)
-    assert work != round(work) or items == 26  # the drift is real, not assumed
+    work = quantity / rate
+    over = work / takt
+    if is_trap:
+        # The drift is real and is asserted, not assumed -- an assertion of this
+        # shape is what caught the version dependency described above, by
+        # refusing to claim a trap that had stopped existing.
+        drift = over - round(over)
+        assert 0 < drift < 1e-9, (
+            f"{work!r} / {takt} is {over!r}, which is not a hair above an "
+            "integer -- this case no longer exercises the epsilon"
+        )
+    else:
+        assert abs(over - round(over)) > 1e-6, "the control must not sit near a boundary"
     assert crews_for(work, takt) == expected
 
 

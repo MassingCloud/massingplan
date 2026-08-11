@@ -18,6 +18,7 @@ from .identity import (
     Role,
     User,
 )
+from .lastplanner import CommitmentRow, ConstraintRow, WeeklyPlanRow
 from .locations import LinearActivity, LinearQuantity, ProjectLocation
 from .schedule import (
     Activity,
@@ -45,6 +46,8 @@ __all__ = [
     "BaselineActivity",
     "Calendar",
     "CalendarException",
+    "CommitmentRow",
+    "ConstraintRow",
     "DeliveryStatus",
     "ImportJob",
     "LinearActivity",
@@ -62,6 +65,7 @@ __all__ = [
     "Webhook",
     "WebhookDelivery",
     "WebhookEvent",
+    "WeeklyPlanRow",
     "new_id",
     "utcnow",
 ]

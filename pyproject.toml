@@ -23,15 +23,19 @@ keywords = [
     "location based scheduling",
     "takt",
     "takt planning",
+    "last planner",
+    "ppc",
+    "production control",
     "monte carlo",
     "resource levelling",
     "flask",
 ]
-# `last planner` is deliberately absent: it is not built. `line of balance`
-# was absent for the same reason until `core/locations.py` landed, and `takt`
-# until `core/takt.py` did.
-# `tests/test_scaffolding.py` fails both ways -- if a keyword claims something
-# unbuilt, and if something gets built while the keyword stays missing.
+# Every keyword here names something that exists. `line of balance` was absent
+# until `core/locations.py` landed, `takt` until `core/takt.py`, and
+# `last planner` until `core/lastplanner.py` -- each added on the commit that
+# built it, because `tests/test_scaffolding.py` fails both ways: if a keyword
+# claims something unbuilt, and if something gets built while the keyword stays
+# missing.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Flask",
@@ -284,6 +288,21 @@ forbidden_modules = [
     "massingplan.services.identity.oidc",
     "massingplan.services.storage.s3",
 ]
+# The seams' own lazy imports, and only those. `identity.resolve("oidc")` imports
+# the adapter inside a `try`/`except ImportError` that re-raises as
+# `AdapterUnavailableError` with an install hint -- that edge *is* the mechanism
+# which makes deleting the adapter safe, so forbidding it would forbid the thing
+# the contract exists to protect.
+#
+# Every other route to an adapter is still caught: a blueprint importing
+# `services.identity.oidc` directly breaks this contract, which is how the SSO
+# routes were found reaching past the seam.
+#
+# Only the identity seam is listed, because only that adapter exists. The other
+# two seams have the identical lazy import in `resolve()` and will need the
+# same line here the day they are implemented -- import-linter rejects an
+# ignore that matches nothing, so they cannot be added in advance.
+ignore_imports = ["massingplan.services.identity -> massingplan.services.identity.oidc"]
 
 [[tool.importlinter.contracts]]
 name = "Adapter bases never import their implementations"

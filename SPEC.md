@@ -51,8 +51,12 @@ on its own and consumed by both.
   `objective()`); no metaheuristic ships in v1. A non-deterministic optimiser
   cannot be hand-checked, and hand-checkability is the property this package
   trades everything else for.
-- **Not a field app.** Last Planner production control is phase P11+, after the
-  engine is sound.
+- **Not a field app.** Last Planner is here as of P13 — commitments, the
+  constraint log, and PPC — but there is no mobile client and no offline
+  capture. It is a planner's board, not a foreman's phone. There is also **no
+  lookahead board**: constrained work is refused rather than parked, because
+  storing a rejected commitment beside an accepted one puts it one boolean away
+  from the PPC denominator.
 - **No binary `.mpp` writing.** The format is proprietary and undocumented;
   interchange is via MSPDI XML.
 
@@ -338,7 +342,7 @@ Each phase meets its acceptance criteria, with tests, before the next begins.
 | **P10** | Vendor into massing | A real XER imports with logic intact and a non-flat critical path |
 | **P11** | `locations` — location-based scheduling | Crew continuity holds; the line shift takes its maximum over every location; the emitted network schedules to the same dates through the ordinary engine |
 | **P12** | `takt` — takt planning | The duration is `(wagons + zones − 1) × takt` and holds through the ordinary engine; idle capacity is reported unrounded; a wagon that cannot meet the takt within its crew ceiling is refused rather than squeezed |
-| **P13+** | Last Planner production control | — |
+| **P13** | `lastplanner` — production control | PPC's denominator cannot shrink after the week; an unassessed week is unmeasurable rather than perfect; a missed commitment without a reason is refused; constrained work cannot be committed |
 
 ## 12. Vendoring into massing
 

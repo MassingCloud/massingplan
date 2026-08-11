@@ -387,6 +387,110 @@ def schedule_linear(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def schedule_takt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Takt planning: a fixed rhythm through the zones.
+
+    Same contract as `schedule_linear` and deliberately so -- both return the
+    flow *and* the network it emits, because neither is a second scheduler.
+    Hand the `activities` to `/schedule` and the dates come back identical.
+
+    `takt_days` is optional. Omitted, it uses the shortest feasible rhythm and
+    reports it, rather than defaulting to a week and quietly overloading the
+    bottleneck trade -- a plan that cannot be built but looks like one is worse
+    than a refusal.
+    """
+    from ..core.takt import TaktError, Wagon, minimum_takt
+    from ..core.takt import plan as build_takt
+    from ..core.takt import to_network as takt_network
+
+    raw_zones = payload.get("zones") or payload.get("locations") or []
+    if not raw_zones:
+        raise ValidationFailed("a takt plan needs a zone breakdown")
+    raw_wagons = payload.get("wagons") or []
+    if not raw_wagons:
+        raise ValidationFailed("a takt plan needs at least one wagon")
+
+    from ..core.locations import Location
+
+    try:
+        zones = [
+            Location(
+                id=str(entry.get("id") or ""),
+                name=str(entry.get("name") or ""),
+                sequence=int(entry.get("sequence") or index),
+            )
+            for index, entry in enumerate(raw_zones)
+        ]
+        wagons = [
+            Wagon(
+                id=str(entry.get("id") or ""),
+                name=str(entry.get("name") or ""),
+                work_content={
+                    str(k): float(v) for k, v in (entry.get("work_content") or {}).items()
+                },
+                default_work=float(entry.get("default_work") or 0.0),
+                max_crews=int(entry.get("max_crews") or 4),
+            )
+            for entry in raw_wagons
+        ]
+    except (TypeError, ValueError) as exc:
+        raise ValidationFailed(f"unusable takt plan: {exc}") from exc
+
+    calendars = _calendars(payload.get("calendars"))
+    calendar = next(iter(calendars.values()))
+    start = _date(payload.get("start"), "start") or _date(payload.get("data_date"), "data_date")
+    if start is None:
+        raise ValidationFailed("a takt plan needs a `start` date to run from")
+
+    try:
+        feasible, bottleneck = minimum_takt(wagons, zones)
+        raw_takt = payload.get("takt_days")
+        takt_days = feasible if raw_takt in (None, "") else int(raw_takt)
+        result = build_takt(wagons, zones, takt_days=takt_days)
+        net_tasks, links, _cals = takt_network(
+            result, wagons, zones, start=start, calendar=calendar
+        )
+    except TaktError as exc:
+        raise ValidationFailed(str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise ValidationFailed(f"unusable takt plan: {exc}") from exc
+
+    return {
+        "start": start.isoformat(),
+        "takt_days": result.takt_days,
+        "minimum_takt_days": feasible,
+        "bottleneck": bottleneck,
+        "duration_working_days": result.duration_days,
+        "slots": result.to_rows(start=start, calendar=calendar),
+        "crews": result.crews,
+        # Unrounded, and named. This is what the rhythm cost, and it is the
+        # takt equivalent of `continuity_cost_days` above -- the number the
+        # method has to be justified against rather than the one it advertises.
+        "utilisation": {k: round(v, 4) for k, v in result.utilisation.items()},
+        "idle_crew_days": round(result.idle_crew_days, 2),
+        "overloaded": list(result.overloaded),
+        "issues": result.issues.to_list(),
+        "activities": [
+            {
+                "id": task.id,
+                "name": task.name,
+                "duration_days": task.duration_days,
+                "calendar_id": task.calendar_id,
+                "constraint": task.constraint.value,
+                "constraint_date": (
+                    task.constraint_date.isoformat() if task.constraint_date else None
+                ),
+                "predecessors": [
+                    {"id": link.predecessor, "type": link.type.value, "lag_days": link.lag_days}
+                    for link in links
+                    if link.successor == task.id
+                ],
+            }
+            for task in net_tasks
+        ],
+    }
+
+
 def level_resources(payload: Mapping[str, Any]) -> dict[str, Any]:
     calendars = _calendars(payload.get("calendars"))
     tasks, links = _tasks_and_links(payload.get("activities") or [], calendars)

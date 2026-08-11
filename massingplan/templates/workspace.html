@@ -128,6 +128,12 @@
   <a href="{{ url_for('main.project_linear', project_id=project.id) }}">Line of balance →</a>
   — where the crews are, and where they close on each other. A Gantt cannot show that.
 </p>
+<p class="note">
+  <a href="{{ url_for('main.project_takt', project_id=project.id) }}">Takt plan →</a>
+  — the same work on a fixed rhythm instead, and what the rhythm costs in idle
+  crew-days. The two read off one take-off, so they can be compared rather than
+  argued about.
+</p>
 {% endif %}
 
 <section>

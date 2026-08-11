@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}{{ project.code }} — takt plan — massingplan{% endblock %}
+{% block content %}
+<h1>{{ project.code }} — takt plan</h1>
+<p class="note">
+  <a href="{{ url_for('main.project_linear', project_id=project.id) }}">← line of balance</a>
+  ·
+  <a href="{{ url_for('main.project_detail', project_id=project.id) }}">the schedule</a>
+</p>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if takt %}
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Takt</span>
+    <span class="tile-value">{{ takt.takt_days }}</span>
+    <span class="tile-sub">working days per zone</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Duration</span>
+    <span class="tile-value">{{ takt.duration_working_days }}</span>
+    <span class="tile-sub">
+      ({{ project.linear_activities | length }} + {{ project.locations | length }} − 1) × {{ takt.takt_days }}
+    </span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Idle capacity</span>
+    <span class="tile-value">{{ takt.idle_crew_days }}</span>
+    <span class="tile-sub">crew-days paid for, not worked</span>
+  </div>
+</section>
+
+<p class="lede">
+  Every wagon occupies one zone for exactly one takt. The crew sizes move so the
+  durations do not — which is what makes the finish date knowable before any of
+  the work is estimated, and what you pay for in the idle capacity above.
+</p>
+
+{% if takt.overloaded %}
+<div class="alert alert-error">
+  <strong>This plan cannot be built as stated.</strong>
+  {{ takt.overloaded | join(", ") }} cannot fit a {{ takt.takt_days }}-day takt
+  within the crews they can field. Lengthen the takt, split the zone, or raise
+  the ceiling.
+</div>
+{% endif %}
+
+<section>
+  <h2>The rhythm</h2>
+  <p class="note">
+    The shortest takt every wagon can meet is <strong>{{ takt.minimum_takt_days }} days</strong>,
+    and it is <strong>{{ takt.bottleneck }}</strong> that sets it. Shortening any
+    other trade changes nothing at all — that is the one worth attacking.
+  </p>
+  <form method="get" class="uploader">
+    <label for="takt-days">Takt time (working days per zone)</label>
+    <input type="number" id="takt-days" name="takt_days" min="1"
+           value="{{ takt.takt_days }}">
+    <button type="submit">Re-plan</button>
+  </form>
+</section>
+
+<section>
+  <h2>Wagons</h2>
+  <p class="note">
+    <strong>Utilisation</strong> is the fraction of the crew-time you pay for
+    that is actually worked. It is not rounded, because rounding it is how a
+    takt plan comes to look efficient when a third of a trade is standing about.
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>#</th><th>Wagon</th><th>Crews</th><th>Utilisation</th><th>Reading</th></tr>
+    </thead>
+    <tbody>
+      {% for wagon, crews in takt.crews.items() %}
+      {% set used = takt.utilisation[wagon] %}
+      <tr class="{{ 'status-fail' if wagon in takt.overloaded else '' }}">
+        <td class="muted">{{ loop.index }}</td>
+        <td><strong>{{ wagon }}</strong></td>
+        <td>{{ crews }}</td>
+        <td>
+          {% if used >= 0.9 %}<span class="pill pill-pass">{{ (used * 100) | round(0, 'floor') | int }}%</span>
+          {% elif used >= 0.6 %}{{ (used * 100) | round(0, 'floor') | int }}%
+          {% else %}<span class="pill pill-warn">{{ (used * 100) | round(0, 'floor') | int }}%</span>{% endif %}
+        </td>
+        <td class="muted">
+          {% if wagon in takt.overloaded %}Cannot fit the takt with the crews it can field.
+          {% elif used >= 0.9 %}A full wagon — the rhythm costs this trade almost nothing.
+          {% elif used >= 0.6 %}Some slack, which is the normal price of a fixed rhythm.
+          {% else %}Most of this crew's paid time is not worked. Consider merging it with its neighbour, or a shorter takt.
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>The train</h2>
+  <p class="note">
+    Wagon <em>n</em> enters zone <em>z</em> at takt <em>n + z</em>. No search,
+    no shifting, no float — that is the whole scheduling calculation, and it is
+    why you can read the duration off the plan.
+  </p>
+  <table class="checks">
+    <thead>
+      <tr><th>Wagon</th><th>Zone</th><th>Takt</th><th>Start</th><th>Finish</th><th>Crews</th><th>Used</th></tr>
+    </thead>
+    <tbody>
+      {% for slot in takt.slots %}
+      <tr>
+        <td><strong>{{ slot.wagon_id }}</strong></td>
+        <td>{{ slot.zone_id }}</td>
+        <td class="muted">{{ slot.takt_index + 1 }}</td>
+        <td>{{ slot.start }}</td>
+        <td>{{ slot.finish }}</td>
+        <td class="muted">{{ slot.crews }}</td>
+        <td class="muted">{{ (slot.utilisation * 100) | round(0, 'floor') | int }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if takt.issues %}
+<section>
+  <h2>Issues <span class="muted">({{ takt.issues | length }})</span></h2>
+  <table class="checks">
+    <thead><tr><th>Severity</th><th>Code</th><th>What</th><th>What was done</th></tr></thead>
+    <tbody>
+      {% for issue in takt.issues %}
+      <tr>
+        <td><span class="pill pill-{{ 'fail' if issue.severity == 'error' else ('warn' if issue.severity == 'warning' else 'pass') }}">{{ issue.severity }}</span></td>
+        <td><code>{{ issue.code }}</code></td>
+        <td>{{ issue.message }}</td>
+        <td class="muted">{{ issue.action }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% else %}
+<p class="lede">
+  This project has no location model yet. A takt plan needs the same two things
+  a line of balance does: an ordered list of zones, and the trades that flow
+  through them.
+</p>
+<p class="note">
+  <a href="{{ url_for('main.project_linear', project_id=project.id) }}">Define the breakdown →</a>
+</p>
+{% endif %}
+{% endblock %}

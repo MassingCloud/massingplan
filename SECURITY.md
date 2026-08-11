@@ -121,6 +121,25 @@ marketing document.
   is the gap between `getaddrinfo` and `connect` on that pinned address, which
   pinning narrows but does not close. Egress filtering at the network is the
   control that does close it.
+- **Password hashing is bounded twice, and it needs to be.** `auth.sign_in`
+  runs argon2id at 64MiB, which makes it the most expensive thing the app does
+  per request — measured at 35 seconds on a memory-pressured machine. The rate
+  limit bounds attempts *per fifteen minutes*; it does not bound attempts
+  *arriving together*, and twenty simultaneous ones all pass a limit of twenty
+  and then all allocate. `accounts.MAX_CONCURRENT_HASHES` (default 4,
+  `MASSINGPLAN_MAX_CONCURRENT_HASHES`) bounds hashes in flight, so the excess
+  queues instead of exhausting memory. Raise it only if you have sized the box:
+  the ceiling is roughly that number times 64MiB.
+- **Load tested, in one specific sense.** `tests/test_load.py` runs its own CI
+  job against a real threaded WSGI server over real sockets: nothing 5xxs under
+  eight concurrent clients, two tenants hammering the same endpoints never see
+  each other's data, `/healthz` still answers while the app is busy, and
+  password hashes stay bounded in flight. That is a *correctness-under-
+  concurrency* test. It is **not** a capacity benchmark: it does not tell you
+  requests per second, it was not run against your database or your hardware,
+  and it asserts no latency threshold — a wall-clock ratio was tried, measured
+  a noise floor around 4x, and was removed rather than shipped as a number that
+  would either flap or catch nothing. Size your deployment by measuring it.
 - **No penetration test.** Nobody outside the project has tried to break it.
   `tests/test_adversarial.py` runs as its own CI job and attacks the app from
   the outside — cross-tenant reads and writes, forged and revoked keys, session

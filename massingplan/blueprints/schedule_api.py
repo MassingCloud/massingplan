@@ -113,6 +113,12 @@ def linear() -> Any:
     return jsonify(schedules.schedule_linear(_payload()))
 
 
+@bp.post("/takt")
+def takt() -> Any:
+    """Takt planning: the train, the crews it needs, and what the rhythm cost."""
+    return jsonify(schedules.schedule_takt(_payload()))
+
+
 @bp.post("/level")
 def level() -> Any:
     """Resource-level the network. Advisory by default -- core never writes."""

@@ -337,7 +337,8 @@ Each phase meets its acceptance criteria, with tests, before the next begins.
 | **P9** | `compare` | Attribution sums exactly to the finish move |
 | **P10** | Vendor into massing | A real XER imports with logic intact and a non-flat critical path |
 | **P11** | `locations` — location-based scheduling | Crew continuity holds; the line shift takes its maximum over every location; the emitted network schedules to the same dates through the ordinary engine |
-| **P12+** | Takt planning; Last Planner production control | — |
+| **P12** | `takt` — takt planning | The duration is `(wagons + zones − 1) × takt` and holds through the ordinary engine; idle capacity is reported unrounded; a wagon that cannot meet the takt within its crew ceiling is refused rather than squeezed |
+| **P13+** | Last Planner production control | — |
 
 ## 12. Vendoring into massing
 

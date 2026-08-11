@@ -243,6 +243,33 @@ def project_linear(project_id: str) -> Any:
     )
 
 
+@bp.get("/projects/<project_id>/takt")
+@deps.login_required
+def project_takt(project_id: str) -> Any:
+    """The same location model, planned as a takt train.
+
+    Deliberately the same breakdown and the same take-off as the line of
+    balance next door: the two methods disagree about what to do with the work,
+    not about what the work is. Putting them side by side on one model is the
+    only honest way to choose between them -- one shows what continuity costs,
+    the other what the rhythm costs.
+
+    `?takt_days=` overrides the rhythm; omitted, the page uses the shortest
+    feasible one and says which trade sets it.
+    """
+    project = deps.load_project(project_id)
+    raw = request.args.get("takt_days", "").strip()
+    try:
+        wanted = int(raw) if raw else None
+    except ValueError:
+        wanted = None
+    try:
+        takt = projects.takt_plan(project, takt_days=wanted)
+    except (projects.ProjectError, ValueError) as exc:
+        return render_template("project_takt.html", project=project, takt=None, error=str(exc)), 400
+    return render_template("project_takt.html", project=project, takt=takt, error=None)
+
+
 @bp.post("/projects/<project_id>/linear/locations")
 @deps.require_permission(Permission.PROJECT_WRITE)
 def set_locations(project_id: str) -> Any:

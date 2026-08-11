@@ -292,12 +292,13 @@ def test_assess_exits_non_zero_when_a_check_fails(tmp_path: Path) -> None:
 #: while no line of either existed.
 DEFERRED_CAPABILITIES = {
     "last planner": ("last.planner", "make.ready", "weekly work plan", "pull plan"),
-    "takt": ("takt",),
 }
 # `line of balance` and `location based` were here until `core/locations.py`
-# landed. The parametrised test below is what noticed: it failed on the commit
-# that built them, naming the keyword list, so the advertisement was added
-# deliberately rather than the feature shipping unadvertised.
+# landed, and `takt` until `core/takt.py` did. The parametrised test below is
+# what noticed both times: it failed on the commit that built the feature,
+# naming the keyword list, so the advertisement got added deliberately rather
+# than the capability shipping unadvertised forever. It has now fired in both
+# directions twice, which is the whole reason it is written this way.
 
 
 def test_no_keyword_advertises_something_that_is_not_built() -> None:

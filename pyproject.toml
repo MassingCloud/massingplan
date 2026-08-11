@@ -21,12 +21,15 @@ keywords = [
     "dcma",
     "line of balance",
     "location based scheduling",
+    "takt",
+    "takt planning",
     "monte carlo",
     "resource levelling",
     "flask",
 ]
 # `last planner` is deliberately absent: it is not built. `line of balance`
-# was absent for the same reason until `core/locations.py` landed.
+# was absent for the same reason until `core/locations.py` landed, and `takt`
+# until `core/takt.py` did.
 # `tests/test_scaffolding.py` fails both ways -- if a keyword claims something
 # unbuilt, and if something gets built while the keyword stays missing.
 classifiers = [

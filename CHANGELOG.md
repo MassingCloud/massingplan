@@ -74,6 +74,28 @@ Keep a Changelog, Semantic Versioning. Grouped by the phase that produced it.
   because a silently dropped take-off is work the planner believes is in the
   model and is not.
 
+### Added — takt planning
+
+- `core/takt.py`: the same zones and the same take-off, planned as a train
+  instead of a set of lines. Every wagon occupies one zone for exactly one
+  takt, the crew sizes move so the durations do not, and the duration is
+  `(wagons + zones − 1) × takt` — readable off the plan before any of the work
+  is estimated, which is the whole product.
+- **Utilisation is reported unrounded**, per wagon: the fraction of the
+  crew-time you pay for that is actually worked. It is the takt equivalent of
+  `continuity_cost_days`, and rounding it is how a takt plan comes to look
+  efficient while a third of a trade stands about.
+- A wagon that cannot meet the takt within the crews it can field is **refused,
+  not squeezed**. Silently capping the crew count produces a wagon that
+  overruns its slot, breaks the rhythm everywhere downstream, and still looks
+  like a takt plan.
+- `minimum_takt()` names the bottleneck trade as well as the number, because
+  shortening any other one changes nothing.
+- Work content is derived by the *same* function line of balance uses
+  (`locations.work_content`), so the two methods cannot disagree about how much
+  work is on level 7 — only about what to do with it. `/projects/<id>/takt`
+  puts them side by side on one model.
+
 ### Fixed — bugs the work surfaced
 
 - **Self-service registration made strangers owners of the default

@@ -372,6 +372,84 @@ def linear_schedule(project: Project, *, start: date | None = None) -> dict[str,
     }
 
 
+def takt_plan(
+    project: Project, *, takt_days: int | None = None, start: date | None = None
+) -> dict[str, Any] | None:
+    """The same stored location model, planned as a takt train instead.
+
+    No new tables and no second take-off. Work content per zone comes from
+    exactly what line of balance already uses -- quantity over rate, or the
+    flat duration -- because it *is* the same fact about the work. What differs
+    is what the two methods do with it: line of balance lets each trade run at
+    its own pace, takt forces a common rhythm and moves the crews instead.
+
+    Deriving both from one input is the point. A planner can put the two side
+    by side and see what the rhythm costs on this job, which is the only honest
+    way to choose between them.
+
+    `takt_days=None` asks `minimum_takt` for the shortest feasible rhythm
+    rather than defaulting to a week: a default that silently overloads the
+    bottleneck trade would produce an unbuildable plan that looks fine.
+
+    The stored `crews` is read as the **crew ceiling**, which is a different
+    meaning from the one line of balance gives it (crews actually deployed).
+    Stated here because it is a genuine overload of one field, kept because the
+    alternative is a second column that means almost the same thing and gets
+    out of step.
+    """
+    from ..core.takt import Wagon, minimum_takt
+    from ..core.takt import plan as build_takt
+    from ..core.takt import to_network as takt_network
+    from ..core.timeaxis import standard_calendar
+
+    tasks, locations = repo.to_linear(project)
+    if not tasks or not locations:
+        return None
+
+    from ..core.issues import IssueLog
+    from ..core.locations import work_content
+
+    issues = IssueLog()
+    wagons = []
+    for task in tasks:
+        per_zone = work_content(task, tuple(locations), issues)
+        wagons.append(
+            Wagon(
+                id=task.id,
+                name=task.name,
+                work_content={zone: float(days) for zone, days in per_zone.items()},
+                default_work=float(task.duration_days),
+                max_crews=max(1, task.crews),
+            )
+        )
+
+    feasible, bottleneck = minimum_takt(wagons, locations)
+    chosen = takt_days if takt_days is not None else feasible
+
+    began = start or project.planned_start or project.data_date or date.today()
+    calendar = standard_calendar()
+    result = build_takt(wagons, locations, takt_days=chosen, issues=issues)
+    net_tasks, links, _cals = takt_network(
+        result, wagons, locations, start=began, calendar=calendar
+    )
+
+    return {
+        "start": began.isoformat(),
+        "takt_days": result.takt_days,
+        "minimum_takt_days": feasible,
+        "bottleneck": bottleneck,
+        "duration_working_days": result.duration_days,
+        "slots": result.to_rows(start=began, calendar=calendar),
+        "crews": result.crews,
+        "utilisation": {k: round(v, 4) for k, v in result.utilisation.items()},
+        "idle_crew_days": round(result.idle_crew_days, 2),
+        "overloaded": list(result.overloaded),
+        "issues": result.issues.to_list(),
+        "activities": [{"id": t.id, "name": t.name} for t in net_tasks],
+        "links": len(links),
+    }
+
+
 #: The most lines either location textarea will parse. A breakdown is one line
 #: per place in the building and a take-off is one line per place plus a few
 #: exceptions, so two thousand is far past any real project and far short of

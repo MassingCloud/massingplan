@@ -7,7 +7,9 @@ to read them and one place they can be got wrong.
 from __future__ import annotations
 
 import contextlib
+import os
 import secrets
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -90,21 +92,49 @@ def _hasher():  # type: ignore[no-untyped-def]
     return PasswordHasher(time_cost=TIME_COST, memory_cost=MEMORY_COST_KIB, parallelism=PARALLELISM)
 
 
+#: How many password hashes may be in flight at once, per process.
+#:
+#: The rate limiter bounds hashes **per fifteen minutes**; this bounds them
+#: **at the same instant**, and the two are not the same guard. Twenty sign-in
+#: attempts arriving together all pass a limit of twenty per window and then all
+#: enter argon2 simultaneously -- twenty times 64MiB is 1.3GB of allocation, at
+#: once, from one client. Distinct source addresses lift even that bound.
+#:
+#: The cost is deliberate and must not be lowered; what was missing is that a
+#: *deliberately expensive* operation with no concurrency bound is a memory
+#: amplifier pointed at the server. Queueing is the right trade: a sign-in that
+#: waits is a slow sign-in, and a sign-in that cannot allocate is a 500 -- which
+#: this repo has already seen, as `HashingError: Memory allocation error`, and
+#: mistook for a code defect because on a loaded machine it looks like one.
+#:
+#: Four, so the ceiling is ~256MiB of hashing whatever arrives. Overridable for
+#: an operator who has sized their box and wants more throughput.
+MAX_CONCURRENT_HASHES = int(os.getenv("MASSINGPLAN_MAX_CONCURRENT_HASHES", "4"))
+
+#: Module-level and deliberately not per-app: the bound protects the *process*
+#: address space, which is shared by every app instance a worker happens to
+#: hold. A per-app semaphore would be a bound per app object, which is not the
+#: resource being protected.
+_hash_slots = threading.BoundedSemaphore(max(1, MAX_CONCURRENT_HASHES))
+
+
 def hash_password(password: str) -> str:
     if len(password) < 12:
         # Length, not composition rules. Forced symbols produce `P@ssw0rd!` and
         # a sticky note; length is the only requirement that reliably helps.
         raise AccountError("a password must be at least 12 characters")
-    return str(_hasher().hash(password))
+    with _hash_slots:
+        return str(_hasher().hash(password))
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     from argon2.exceptions import VerificationError, VerifyMismatchError
 
-    try:
-        return bool(_hasher().verify(password_hash, password))
-    except (VerifyMismatchError, VerificationError):
-        return False
+    with _hash_slots:
+        try:
+            return bool(_hasher().verify(password_hash, password))
+        except (VerifyMismatchError, VerificationError):
+            return False
 
 
 def needs_rehash(password_hash: str) -> bool:

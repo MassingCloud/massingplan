@@ -178,6 +178,24 @@ jobs:
       # place they execute.
       - run: pytest tests/test_performance.py -q -m performance --durations=12
 
+  load:
+    # Concurrency, over real sockets, against a real WSGI server. Separate from
+    # `performance` because it asserts a different kind of thing: that class
+    # measures complexity on one thread, this one measures what happens when
+    # requests overlap -- no 5xx, no cross-tenant bleed, a health check that
+    # still answers, and a bounded number of password hashes in flight.
+    #
+    # It binds a port and starts threads, which is why it is neither in the
+    # default run nor in the performance job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/test_load.py -q -m performance --durations=8
+
   determinism:
     # Same input, same answer -- across runs and hash seeds. Without a
     # total-order tiebreak on every sort, set iteration order leaks into

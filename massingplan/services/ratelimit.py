@@ -51,10 +51,19 @@ class Decision:
 #: deliberately, so adding an endpoint does not silently inherit a number
 #: somebody chose for a different one.
 #:
-#: The two groups are different problems. Credential endpoints are cheap for the
-#: server and valuable to an attacker, so they are limited hard. The compute
-#: endpoints are the reverse: legitimate, and expensive enough that a handful of
-#: concurrent Monte Carlo runs is a denial of service by accident.
+#: The two groups are different problems. Credential endpoints are valuable to
+#: an attacker, so they are limited hard. The compute endpoints are legitimate
+#: and expensive enough that a handful of concurrent Monte Carlo runs is a
+#: denial of service by accident.
+#:
+#: This comment used to say credential endpoints were "cheap for the server",
+#: which a load test disproved: `auth.sign_in` runs argon2id at 64MiB, making
+#: it the single most expensive thing the app does per request. That matters
+#: here because a limit of twenty per fifteen minutes does **not** bound twenty
+#: arriving at the same instant -- all twenty pass, and all twenty allocate.
+#: The concurrency bound that closes that gap is
+#: `accounts.MAX_CONCURRENT_HASHES`; this table is the rate half, not the
+#: simultaneity half, and neither substitutes for the other.
 LIMITS: dict[str, Limit] = {
     "auth.sign_in": Limit(20, 900),
     # Tighter than sign-in, because the search space is smaller. A six-digit

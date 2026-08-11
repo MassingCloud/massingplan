@@ -132,6 +132,7 @@ def test_no_route_is_skipped_silently(app) -> None:
         "main.revoke_key",
         "main.delete_webhook",
         "main.project_linear",
+        "main.project_takt",
         "main.set_locations",
         "main.add_trade",
         "main.delete_trade",

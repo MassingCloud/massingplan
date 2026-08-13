@@ -67,6 +67,46 @@ matching, driving-path deltas, and attribution whose contributions sum exactly
 to the finish move. A residual is named `PATH_SWITCH` or `UNEXPLAINED`, never
 dropped to make the arithmetic work.
 
+**Line of balance.** Location-based scheduling with **crew continuity** — the
+thing CPM structurally cannot express. The line shift takes its maximum over
+*every* location, which is what stops a faster successor overtaking its
+predecessor somewhere in the middle of the building while both ends still look
+clear. It reports the **binding location**, where the buffer is fully consumed
+and a slip is felt first, and the continuity cost in crew-days of float given
+up to keep crews whole.
+
+**Takt planning.** The same zones and the same take-off, planned as a train
+instead: every wagon occupies one zone for exactly one takt, the crew sizes
+move so the durations do not, and the duration is `(wagons + zones − 1) × takt`
+— readable off the plan before any of the work is estimated. What it costs is
+reported unrounded, per wagon: utilisation below 1.0 is capacity bought and not
+worked, and rounding it is how a takt plan comes to look efficient while a
+third of a trade stands about. A wagon that cannot meet the takt within the
+crews it can field is refused, not squeezed.
+
+**Last Planner.** Commitments, the constraint log, and PPC — plan reliability
+rather than progress. Built around the fact that PPC is trivially gameable: the
+denominator is frozen when the week is committed, partial completion is not
+partial credit, an unassessed commitment makes the week *unmeasurable* rather
+than perfect, a missed commitment without a reason is refused, and constrained
+work cannot be committed at all. The trend is reported as a series, never as
+one lifetime average — five good weeks and one collapse is a project with a
+problem in week six, and 72% shows nothing.
+
+## The application
+
+The engine is the point, but it ships inside a working self-hostable app:
+Flask and Jinja, a self-hosted SVG Gantt and line-of-balance chart with no CDN
+and `default-src 'self'` intact, SQLAlchemy persistence with Alembic
+migrations, organisations and four roles, API keys hashed at rest, an
+append-only audit log, signed outbound webhooks, optional TOTP two-factor, and
+optional **SSO** over OIDC authorization-code with PKCE.
+
+`massingplan/core/` needs none of it. It is pure standard library, held that
+way by an import-linter contract and a dependency-free CI job, so it can be
+vendored into another product's source tree and imported with no packaging
+change.
+
 ## Design commitments
 
 - **Hand-checkable.** Every algorithm has a test network a human can verify with
@@ -82,8 +122,16 @@ dropped to make the arithmetic work.
 
 ## Status
 
-Alpha, built in phases. See `SPEC.md` §11 for the plan and what each phase has
-to prove before the next starts.
+Alpha, built in phases through P13. See `SPEC.md` §11 for the plan and what
+each phase has to prove before the next starts.
+
+What is deliberately **not** here, so it is not discovered later: there is no
+mobile or offline client for Last Planner — it is a planner's board, not a
+foreman's phone — and no lookahead board, because storing rejected commitments
+beside accepted ones would put them one boolean away from the PPC denominator.
+`SECURITY.md` carries the same treatment for the security posture, including
+the two things that have not been done: no penetration test, and no run against
+a commercial identity provider.
 
 ## Documentation
 

@@ -413,3 +413,44 @@ def test_a_deferred_capability_is_either_absent_or_no_longer_deferred(capability
             "Remove it from DEFERRED_CAPABILITIES, add the keyword to "
             "pyproject.toml, and move it out of SPEC.md P11+."
         )
+
+
+#: A `core` module that is a capability somebody buys the product for, and the
+#: phrase the README has to use for it.
+#:
+#: Keyed on the *module*, so the guard switches itself on the moment the file
+#: lands -- the same trick `DEFERRED_CAPABILITIES` uses, aimed at the other
+#: document. `keywords` already fails when something is built and unadvertised;
+#: this is the front door, which had quietly fallen a whole phase behind while
+#: every other gate stayed green. Nothing catches a README that is merely
+#: *incomplete*, because incompleteness breaks no test.
+#:
+#: Only capabilities, not implementation details: `flask` and `p6` are in
+#: `keywords` and have no business being forced into prose. A guard that drives
+#: padding is a guard that gets its prose written to satisfy it.
+README_CAPABILITIES = {
+    "locations.py": "line of balance",
+    "takt.py": "takt",
+    "lastplanner.py": "last planner",
+}
+
+
+@pytest.mark.parametrize("module", sorted(README_CAPABILITIES))
+def test_the_readme_describes_every_capability_that_exists(module: str) -> None:
+    """Both directions, like the keyword guard.
+
+    Built and undescribed is a front door a phase out of date. Described and
+    unbuilt is the stale claim this repo has walked back three times.
+    """
+    root = Path(__file__).resolve().parent.parent
+    phrase = README_CAPABILITIES[module]
+    built = (root / "massingplan" / "core" / module).exists()
+    described = phrase.lower() in (root / "README.md").read_text(encoding="utf-8").lower()
+
+    if built and not described:
+        pytest.fail(
+            f"`core/{module}` exists and README.md never says {phrase!r}. "
+            "The front door is the one document nobody re-reads."
+        )
+    if described and not built:
+        pytest.fail(f"README.md advertises {phrase!r} and `core/{module}` does not exist.")

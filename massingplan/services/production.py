@@ -24,6 +24,7 @@ from ..core.lastplanner import (
     WeeklyPlan,
     assess,
     commit,
+    screen,
 )
 from ..models import CommitmentRow, ConstraintRow, Project, WeeklyPlanRow
 
@@ -90,24 +91,39 @@ def open_constraints(project: Project, *, on: date | None = None) -> list[dict[s
 
     The make-ready meeting's agenda. Sorted by promised date so the oldest
     broken promise is at the top, which is the one worth asking about.
+
+    **Live and overdue are decided by the engine, not here.** This function
+    used to carry its own `removed_on is None or removed_on > on` -- character
+    for character what `Constraint.is_live` says -- and that is one rule with
+    two homes. The failure it invites is quiet and specific: change the
+    engine's definition, say to treat a removal *on* the day as cleared, and
+    the page would show no live constraint for work that `commit()` still
+    refuses as constrained. The planner sees an empty blocker list and a
+    refusal that names one.
+
+    Going through `screen()` is also what gives that function a caller. An
+    engine entry point exercised only by its own test is the shape of code
+    that rots.
     """
     on = on or date.today()
     rows: list[dict[str, Any]] = []
     for plan in project.weekly_plans:
-        for stored in plan.commitments:
-            for constraint in stored.constraints:
-                live = constraint.removed_on is None or constraint.removed_on > on
-                if not live:
-                    continue
+        engine_plan = to_engine(plan)
+        described = {c.id: c.description for c in engine_plan.commitments}
+        _ready, blocked = screen(list(engine_plan.commitments), on=on)
+        for commitment in blocked:
+            for constraint in commitment.live_constraints(on):
                 rows.append(
                     {
                         "id": constraint.id,
-                        "kind": constraint.kind,
+                        "kind": constraint.kind.value,
                         "description": constraint.description,
                         "owner": constraint.owner,
                         "promised_by": constraint.promised_by.isoformat(),
-                        "overdue_days": max(0, (on - constraint.promised_by).days),
-                        "blocks": stored.description,
+                        "overdue_days": (
+                            (on - constraint.promised_by).days if constraint.is_overdue(on) else 0
+                        ),
+                        "blocks": described.get(commitment.id, commitment.description),
                         "week_starting": plan.week_starting.isoformat(),
                     }
                 )

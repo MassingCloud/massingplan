@@ -341,6 +341,69 @@ def test_the_open_constraint_log_puts_the_oldest_broken_promise_first(app, proje
     assert log[0]["blocks"] == "blocked by ancient"
 
 
+@pytest.mark.parametrize("removed_offset", [None, -1, 0, 1, 4])
+def test_the_log_and_the_refusal_never_disagree(app, project_id, removed_offset) -> None:  # type: ignore[no-untyped-def]
+    """The property that made the duplicated rule worth removing.
+
+    `open_constraints` once carried its own copy of "is this constraint live",
+    character for character what `Constraint.is_live` says. One rule with two
+    homes drifts, and the drift here is nasty and quiet: a planner sees an
+    empty blocker list next to a refusal that names a blocker.
+
+    So: for every position of the removal date relative to the week, "the log
+    shows a live constraint" and "committing is refused" must be the same
+    answer.
+
+    The `0` case is the boundary and the one a hand-rolled copy gets wrong.
+    The engine's rule is `removed_on > on`, so a constraint removed **on** the
+    day is already cleared that day; a copy written with `>=` would call it
+    live. Checked against `Constraint.is_live` rather than assumed -- the first
+    version of this docstring asserted the opposite.
+    """
+    removed = None if removed_offset is None else MONDAY + timedelta(days=removed_offset)
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        plan = production.open_week(session, project, MONDAY)
+        production.add_commitment(
+            session,
+            plan,
+            description="Frame level 3",
+            crew="Steel gang",
+            constraints=[
+                {
+                    "kind": ConstraintKind.MATERIALS.value,
+                    "description": "steel delivery",
+                    "owner": "procurement",
+                    "promised_by": MONDAY - timedelta(days=7),
+                    "removed_on": removed,
+                }
+            ],
+            allow_constrained=True,
+        )
+        session.commit()
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        shown_as_blocked = bool(production.open_constraints(project, on=MONDAY))
+
+        # The same question asked of the engine, through the path that refuses.
+        stored = project.weekly_plans[0]
+        refused = False
+        try:
+            production.add_commitment(session, stored, description="another", crew="Steel gang")
+        except LastPlannerError:
+            refused = True
+        session.rollback()
+
+    assert shown_as_blocked == refused, (
+        f"removed_on={removed}: the log says blocked={shown_as_blocked} while "
+        f"committing says refused={refused}"
+    )
+
+
 def test_a_cleared_constraint_leaves_the_log(app, project_id) -> None:  # type: ignore[no-untyped-def]
     with database.session_scope() as session:
         project = session.get(Project, project_id)

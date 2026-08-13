@@ -195,34 +195,49 @@ def sso_callback() -> Any:
             "auth/sign_in.html", error="That sign-in did not complete.", next=""
         ), 400
 
-    with deps.committing() as session:
-        user = accounts.find_by_sso_subject(session, principal.subject)
-        if user is None:
-            user, organization_id = accounts.provision_sso_user(
-                session,
-                subject=principal.subject,
-                email=principal.email,
-                display_name=principal.display_name,
-                organization_name="",
-            )
-            accounts.audit(
-                session,
-                organization_id=organization_id,
-                action="auth.sso_provision",
-                actor_id=user.id,
-                actor_label=user.email,
-                summary="created an account from a verified SSO identity",
-            )
-        else:
-            membership = next(iter(user.memberships), None)
-            if membership is None:
-                raise AccountError("that account has no organisation")
-            organization_id = membership.organization_id
-        if not user.is_active:
-            return render_template(
-                "auth/sign_in.html", error="That account is disabled.", next=""
-            ), 403
-        signed_in_user, signed_in_org = user, organization_id
+    # `AccountError` is caught here for the same reason the password path
+    # handles a missing membership: an SSO user whose membership an owner
+    # removed is in *exactly* the state that path answers with a 403 and an
+    # actionable sentence. Uncaught, this raised straight out of the route and
+    # gave the same person a 500 and a request id -- one state, two answers,
+    # and the useless one only on the newer path.
+    #
+    # It also covers provisioning failing on a name collision or on two first
+    # sign-ins racing for one subject.
+    try:
+        with deps.committing() as session:
+            user = accounts.find_by_sso_subject(session, principal.subject)
+            if user is None:
+                user, organization_id = accounts.provision_sso_user(
+                    session,
+                    subject=principal.subject,
+                    email=principal.email,
+                    display_name=principal.display_name,
+                    organization_name="",
+                )
+                accounts.audit(
+                    session,
+                    organization_id=organization_id,
+                    action="auth.sso_provision",
+                    actor_id=user.id,
+                    actor_label=user.email,
+                    summary="created an account from a verified SSO identity",
+                )
+            else:
+                membership = next(iter(user.memberships), None)
+                if membership is None:
+                    raise AccountError(
+                        "This account is not a member of any organisation. "
+                        "Ask an owner to invite you."
+                    )
+                organization_id = membership.organization_id
+            if not user.is_active:
+                return render_template(
+                    "auth/sign_in.html", error="That account is disabled.", next=""
+                ), 403
+            signed_in_user, signed_in_org = user, organization_id
+    except AccountError as exc:
+        return render_template("auth/sign_in.html", error=str(exc), next=""), 403
 
     deps.sign_in(signed_in_user, signed_in_org)
     return redirect(url_for("main.projects_list"))

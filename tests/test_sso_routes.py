@@ -279,6 +279,60 @@ def test_a_token_for_another_nonce_is_refused_at_the_route(sso_app, idp: FakeIdp
     assert "does not answer this sign-in" in response.get_data(as_text=True)
 
 
+def test_an_sso_user_with_no_organisation_gets_the_same_answer_as_a_password_user(
+    sso_app, idp: FakeIdp
+) -> None:  # type: ignore[no-untyped-def]
+    """One state, one answer.
+
+    An owner removing somebody's membership leaves an account that can still
+    authenticate and belongs nowhere. The password path has always answered
+    that with a 403 and a sentence telling them what to do. The SSO path raised
+    `AccountError` out of the route, so the same person got a 500 and a request
+    id -- and no idea that a membership was the problem.
+    """
+    from massingplan.models.identity import Membership
+
+    client = sso_app.test_client()
+    state, nonce = _begin(client)
+    idp.serve(f"{ISSUER}/token", 200, {"id_token": idp.id_token(nonce=nonce)})
+    assert client.get(f"/auth/sso/callback?code=c&state={state}").status_code == 302
+
+    with database.session_scope() as session:
+        user = session.scalars(select(User).where(User.sso_subject.is_not(None))).one()
+        for membership in list(user.memberships):
+            session.delete(session.get(Membership, membership.id))
+
+    second = sso_app.test_client()
+    state, nonce = _begin(second)
+    idp.serve(f"{ISSUER}/token", 200, {"id_token": idp.id_token(nonce=nonce)})
+    response = second.get(f"/auth/sso/callback?code=c&state={state}")
+
+    assert response.status_code == 403, "a 500 here tells the user nothing"
+    assert "not a member of any organisation" in response.get_data(as_text=True)
+
+
+def test_a_disabled_sso_account_is_refused(sso_app, idp: FakeIdp) -> None:  # type: ignore[no-untyped-def]
+    """Deactivating an account has to stop the SSO door too, or it only ever
+    closed the one with a password on it.
+    """
+    client = sso_app.test_client()
+    state, nonce = _begin(client)
+    idp.serve(f"{ISSUER}/token", 200, {"id_token": idp.id_token(nonce=nonce)})
+    assert client.get(f"/auth/sso/callback?code=c&state={state}").status_code == 302
+
+    with database.session_scope() as session:
+        user = session.scalars(select(User).where(User.sso_subject.is_not(None))).one()
+        user.is_active = False
+
+    second = sso_app.test_client()
+    state, nonce = _begin(second)
+    idp.serve(f"{ISSUER}/token", 200, {"id_token": idp.id_token(nonce=nonce)})
+    response = second.get(f"/auth/sso/callback?code=c&state={state}")
+
+    assert response.status_code == 403
+    assert "disabled" in response.get_data(as_text=True)
+
+
 def test_an_error_from_the_issuer_is_not_echoed(sso_app) -> None:  # type: ignore[no-untyped-def]
     """`error_description` is attacker-influenced text on a page we render."""
     client = sso_app.test_client()

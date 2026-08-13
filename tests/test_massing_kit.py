@@ -161,3 +161,111 @@ def test_the_placement_map_matches_the_vendor_script() -> None:
     for name, relative in PLACEMENT.items():
         assert f'"{name}"' in script, f"{name} is not in the vendor script's ADAPTER_FILES"
         assert f'"{relative}"' in script, f"{name} is placed differently by the vendor script"
+
+
+# -- the drift check itself ------------------------------------------------
+#
+# A drift bot that cries wolf is a drift bot nobody reads, and this one did.
+# Checked out on Windows the source has CRLF and the vendored copy has LF, so a
+# byte comparison reported seven untouched files as drifted -- and buried the
+# one file that had genuinely changed among them.
+
+
+def _vendor_module():  # type: ignore[no-untyped-def]
+    """The script, imported as a module. It is not a package, so this is the
+    honest way to test its functions rather than shelling out and parsing text.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "vendor_to_massing", REPO / "scripts" / "vendor_to_massing.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_line_endings_are_not_drift(tmp_path: Path) -> None:
+    """The false alarm, asserted in both directions.
+
+    The same characters with different newlines is the same file. Different
+    characters is not, whatever the newlines are -- without the second half
+    this "fix" would be a comparison that never reports anything.
+    """
+    vendor = _vendor_module()
+    body = b"def f():\n    return 1\n"
+
+    lf = tmp_path / "lf.py"
+    lf.write_bytes(body)
+    crlf = tmp_path / "crlf.py"
+    crlf.write_bytes(body.replace(b"\n", b"\r\n"))
+    changed = tmp_path / "changed.py"
+    changed.write_bytes(body.replace(b"return 1", b"return 2"))
+
+    assert lf.read_bytes() != crlf.read_bytes(), "the fixture must actually differ in bytes"
+    assert vendor.same_content(lf, crlf), "line endings are a checkout artefact, not content"
+    assert not vendor.same_content(lf, changed), "a real edit must still register as drift"
+
+
+def test_the_pin_digest_does_not_depend_on_the_checkout(tmp_path: Path) -> None:
+    """`VENDOR.md` records a content digest so a consumer can verify the pin.
+
+    One that changes with the platform's line endings cannot be compared
+    between a developer's machine and CI, which is the only place anybody would
+    ever want to compare it.
+    """
+    vendor = _vendor_module()
+    body = b"x = 1\n" * 20
+
+    unix = tmp_path / "unix"
+    unix.mkdir()
+    (unix / "a.py").write_bytes(body)
+    windows = tmp_path / "windows"
+    windows.mkdir()
+    (windows / "a.py").write_bytes(body.replace(b"\n", b"\r\n"))
+
+    assert vendor.tree_digest(unix) == vendor.tree_digest(windows)
+
+
+def test_drift_is_reported_by_kind(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    """Missing, extra and changed mean different things.
+
+    A file only downstream is a local patch, which is the definition of the
+    fork this whole vendoring pattern exists to prevent -- so it is called out
+    rather than listed alongside "this one is newer upstream".
+    """
+    vendor = _vendor_module()
+    target = tmp_path / "massingplan"
+    core = target / "core"
+    core.mkdir(parents=True)
+
+    for name in ("timeaxis.py", "units.py"):
+        shutil.copy(vendor.SOURCE / name, core / name)
+    (core / "a_local_patch.py").write_text("# not upstream\n", encoding="utf-8")
+
+    assert vendor.sync(target, check=True) == 1
+    printed = capsys.readouterr().out
+    assert "only downstream:" in printed
+    assert "a_local_patch.py" in printed
+    assert "a local patch is a fork" in printed
+    assert "missing downstream: cpm.py" in printed
+
+
+def test_a_synced_tree_reports_in_sync(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    """The other direction. A check that can only ever say DRIFT is not a
+    check, and the CRLF bug had made it exactly that on Windows.
+    """
+    vendor = _vendor_module()
+    target = tmp_path / "massingplan"
+    core = target / "core"
+    core.mkdir(parents=True)
+    for source in vendor.SOURCE.glob("*.py"):
+        # Written back with the *other* line ending, so this also proves the
+        # normalisation on a full tree rather than on one hand-made pair.
+        core.joinpath(source.name).write_bytes(
+            source.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        )
+
+    assert vendor.sync(target, check=True) == 0
+    assert "in sync" in capsys.readouterr().out

@@ -35,7 +35,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import filecmp
 import hashlib
 import shutil
 import subprocess
@@ -112,12 +111,39 @@ def working_tree_dirty() -> bool:
         return True
 
 
+def normalised(path: Path) -> bytes:
+    """File contents with line endings flattened to LF.
+
+    **Every comparison in this script goes through here, and that is the fix
+    for a real false alarm.** Git checks this repo out with CRLF on Windows and
+    LF on the CI runner, so a byte-for-byte comparison against the vendored
+    copy reported *seven untouched files as drifted* -- `cpm`, `health`,
+    `mspdi`, `progress`, `risk`, `schedule`, `xer` -- none of which had changed
+    by a single character.
+
+    That is worse than useless twice over: a drift bot that always fires is a
+    drift bot nobody reads, and the noise was hiding the one file that had
+    genuinely changed. Line endings are a checkout artefact, not content.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
+def same_content(left: Path, right: Path) -> bool:
+    return normalised(left) == normalised(right)
+
+
 def tree_digest(root: Path) -> str:
-    """A content hash over the vendored files, so drift is detectable cheaply."""
+    """A content hash over the vendored files, so drift is detectable cheaply.
+
+    Over *normalised* bytes, so the pin recorded in `VENDOR.md` means the same
+    thing on every platform. A hash that changes with the checkout's line
+    endings is a hash that cannot be compared between a developer's machine and
+    CI, which is the only place anybody would want to compare it.
+    """
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*.py")):
         digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(path.read_bytes())
+        digest.update(normalised(path))
     return digest.hexdigest()[:16]
 
 
@@ -224,16 +250,31 @@ def sync(target: Path, *, check: bool, engine_only: bool = False) -> int:
         if not (target / "core").is_dir():
             print(f"DRIFT: {target / 'core'} does not exist")
             return 1
-        comparison = filecmp.dircmp(str(SOURCE), str(target / "core"))
-        drifted = [
-            *comparison.left_only,
-            *[f for f in comparison.right_only if f not in ("VENDOR.md", "py.typed")],
-            *comparison.diff_files,
-        ]
-        if drifted:
+        vendored = target / "core"
+        # Compared by normalised content rather than `filecmp`, which is a byte
+        # comparison and therefore a line-ending comparison. See `normalised()`.
+        upstream_names = {p.name for p in SOURCE.glob("*.py")}
+        vendored_names = {p.name for p in vendored.glob("*.py")}
+
+        missing = sorted(upstream_names - vendored_names)
+        extra = sorted(vendored_names - upstream_names - {"VENDOR.md", "py.typed"})
+        changed = sorted(
+            name
+            for name in upstream_names & vendored_names
+            if not same_content(SOURCE / name, vendored / name)
+        )
+
+        if missing or extra or changed:
             print("DRIFT between upstream and the vendored copy:")
-            for name in sorted(drifted):
-                print(f"  {name}")
+            # Reported by *kind*, because the three mean different things: a
+            # missing file is an unsynced addition, an extra one is a local
+            # patch that makes this a fork, and a changed one could be either.
+            for name in missing:
+                print(f"  missing downstream: {name}")
+            for name in extra:
+                print(f"  only downstream:    {name}  <-- a local patch is a fork")
+            for name in changed:
+                print(f"  content differs:    {name}")
             return 1
         print(f"in sync ({tree_digest(SOURCE)})")
         return 0

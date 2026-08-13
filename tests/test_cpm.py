@@ -607,8 +607,28 @@ def test_a_missing_calendar_falls_back_and_says_so(five_day) -> None:  # type: i
 def test_summarise_is_json_safe(five_day) -> None:  # type: ignore[no-untyped-def]
     import json
 
-    result = calculate([Task("A", "", 5, "5D")], [], {"5D": five_day}, data_date=JUN1)
-    json.dumps(summarise(result))
+    tasks = [Task("A", "", 5, "5D")]
+    result = calculate(tasks, [], {"5D": five_day}, data_date=JUN1)
+    json.dumps(summarise(result, tasks))
+
+
+def test_summarise_names_the_same_finish_as_the_activity_table(five_day) -> None:  # type: ignore[no-untyped-def]
+    """It reported the half-open boundary -- a Saturday, and a day late.
+
+    Nothing in this repo called it, which is exactly why it went unnoticed:
+    `core/` is vendored into another codebase, so an exported function that
+    quietly disagrees with the rest of the engine is a defect waiting on its
+    first consumer rather than a harmless one.
+    """
+    from massingplan.core.schedule import schedule_network
+
+    tasks = [Task("A", "Walls", 5, "5D")]
+    result = calculate(tasks, [], {"5D": five_day}, data_date=JUN1)
+    outcome = schedule_network(tasks, [], {"5D": five_day}, data_date=JUN1)
+
+    finish = summarise(result, tasks)["project_finish"]
+    assert finish == outcome.project_finish.isoformat()
+    assert finish == "2026-06-05", "Friday, not the Saturday boundary"
 
 
 # -- the precedence stack --------------------------------------------------

@@ -140,8 +140,14 @@ def test_sqlite_returns_aware_datetimes_because_the_type_decorator_makes_it(
         again = session.get(Organization, org_id)
         assert again is not None
         assert again.created_at.tzinfo is not None
-        # The comparison that used to raise.
-        assert again.created_at < datetime.now(tz=timezone.utc)
+        # The comparison that used to raise. `<=`, not `<`, and matching the
+        # sibling assertion above: the Windows clock ticks every 15.6ms and two
+        # consecutive `now()` calls return the identical value the great
+        # majority of the time, so an insert and a read-back inside one tick
+        # make these equal. What is under test is that comparing an aware
+        # column against an aware now does not raise -- not that a microsecond
+        # elapsed in between.
+        assert again.created_at <= datetime.now(tz=timezone.utc)
     engine.dispose()
 
 

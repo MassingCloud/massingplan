@@ -653,11 +653,29 @@ def _apply_alap(
         ef[aid] = cal.finish_from_start(new_start, duration)
 
 
-def summarise(result: NetworkResult) -> dict[str, object]:
-    """A JSON-safe headline. Used by the API layer and by tests as a stable digest."""
+def summarise(result: NetworkResult, tasks: Sequence[Task]) -> dict[str, object]:
+    """A JSON-safe headline, used by tests as a stable digest.
+
+    The application layer goes through ``ScheduleOutcome.summary()``; this is
+    for a caller holding a bare result. ``tasks`` is required rather than
+    optional because it is what makes ``project_finish`` the same date the
+    activity table shows -- an optional argument that silently changes the
+    answer by a day is a worse trap than the one it replaces.
+
+    The docstring used to claim the API layer called this. Nothing did, and the
+    date it reported was the half-open boundary run through ``day_of``: the day
+    after the last one worked, and on a Mon-Fri calendar often a Saturday.
+    """
+    # Local, because `schedule` imports this module. The conversion lives there
+    # and is not going to be reimplemented here to flatten an import graph.
+    from .schedule import presented_finish
+
+    finish = presented_finish(result, tasks)
     return {
         "project_start": day_of(result.project_start).isoformat(),
-        "project_finish": day_of(result.project_finish).isoformat(),
+        "project_finish": (
+            finish.isoformat() if finish is not None else day_of(result.project_finish).isoformat()
+        ),
         "activity_count": len(result.order),
         "critical_count": len(result.critical_ids),
         "terminal_activity": result.terminal_activity,

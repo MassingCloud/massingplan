@@ -501,3 +501,31 @@ def test_the_percentiles_never_go_backwards(five_day) -> None:  # type: ignore[n
     dates = [result.percentile(p) for p in (0, 10, 25, 50, 75, 80, 90, 100)]
     assert dates == sorted(d for d in dates if d is not None)
     assert all(d is not None and d.weekday() < 5 for d in dates)
+
+
+# -- the optional argument that was not optional ----------------------------
+
+
+def test_the_report_runs_when_calendars_are_left_to_the_default(five_day) -> None:  # type: ignore[no-untyped-def]
+    """`calendars` is documented optional. Taking that at face value cost the
+    caller the entire report, not one check.
+
+    Check 12 ended at `next(iter(calendars.values()))` on an empty mapping and
+    a bare StopIteration came out of `assess`. Nothing in this repo hit it --
+    both callers pass calendars -- but `core/` is copied into another codebase,
+    where the first caller to use the documented signature would have.
+    """
+    tasks = [Task("A", "Walls", 5, "5D"), Task("B", "Roof", 3, "5D")]
+    links = [Link("A", "B", RelationType.FS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": five_day}, data_date=date(2026, 6, 1))
+
+    report = assess(outcome, tasks, links)  # no calendars
+    assert len(report.checks) == 14
+
+    explicit = assess(outcome, tasks, links, {"5D": five_day})
+    for omitted, supplied in zip(report.checks, explicit.checks, strict=True):
+        assert (omitted.number, omitted.passed, omitted.value) == (
+            supplied.number,
+            supplied.passed,
+            supplied.value,
+        ), f"check {omitted.number} differs when calendars are defaulted"

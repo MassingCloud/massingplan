@@ -97,6 +97,34 @@ def _b64url_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+#: The two client authentication methods this implements, in preference order.
+#: Both are shared-secret; the `*_jwt` methods are a different key management
+#: story and are absent rather than half-built.
+SUPPORTED_AUTH_METHODS = ("client_secret_basic", "client_secret_post")
+
+
+def _auth_method(supported: object) -> str:
+    """Which client authentication method to use at the token endpoint.
+
+    `supported` is the discovery document's
+    `token_endpoint_auth_methods_supported`, which is optional -- and when it
+    is absent OpenID Connect Discovery says the default is
+    `client_secret_basic`. When it is present it is authoritative, and picking
+    something not in it is how an exchange fails with a bare 401.
+    """
+    if not isinstance(supported, list) or not supported:
+        return "client_secret_basic"
+    advertised = [str(m) for m in supported]
+    for method in SUPPORTED_AUTH_METHODS:
+        if method in advertised:
+            return method
+    raise OidcError(
+        "the issuer accepts none of the client authentication methods this "
+        f"supports. It advertises {advertised}; this implements "
+        f"{list(SUPPORTED_AUTH_METHODS)}."
+    )
+
+
 @dataclass(frozen=True)
 class OidcSettings:
     """Operator configuration. No secrets are ever returned by `describe()`."""
@@ -285,32 +313,48 @@ class OidcProvider(IdentityProvider):
     # -- leg two: redeem the code ------------------------------------------
 
     def exchange(self, code: str, request: AuthorizationRequest) -> dict[str, Any]:
-        """Swap the code for tokens at the token endpoint.
+        """Swap the code for tokens, authenticating the way the issuer asks.
 
-        `client_secret_basic`, which every provider supports, and the verifier
-        so the issuer can check the challenge it was given at the start.
+        **The client authentication method comes from the discovery document,
+        not from an assumption here.** The first version of this always sent
+        `client_secret_basic` under a comment claiming every provider supports
+        it. They do not: a deployment whose IdP advertises only
+        `client_secret_post` could never complete an exchange, and the symptom
+        would be a 401 from the token endpoint with nothing on our side saying
+        why.
+
+        `client_secret_basic` remains the default when the document says
+        nothing, because that is what OpenID Connect Discovery specifies as the
+        default.
         """
         document = self.discover()
-        credentials = f"{self.settings.client_id}:{self.settings.client_secret}"
-        basic = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
-        body = urlencode(
-            {
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": self.settings.redirect_uri,
-                "code_verifier": request.code_verifier,
-            }
-        ).encode("ascii")
+        supported = document.get("token_endpoint_auth_methods_supported")
+        method = _auth_method(supported)
 
+        fields = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.settings.redirect_uri,
+            "code_verifier": request.code_verifier,
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
+        if method == "client_secret_post":
+            # In the body, which is what a provider advertising only this one
+            # will accept. The secret is still only ever sent over the vetted,
+            # pinned connection `Fetcher` opens.
+            fields["client_id"] = self.settings.client_id
+            fields["client_secret"] = self.settings.client_secret
+        else:
+            credentials = f"{self.settings.client_id}:{self.settings.client_secret}"
+            basic = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
+            headers["Authorization"] = f"Basic {basic}"
+
+        body = urlencode(fields).encode("ascii")
         status, raw = self.fetch(
-            str(document["token_endpoint"]),
-            method="POST",
-            body=body,
-            headers={
-                "Authorization": f"Basic {basic}",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
+            str(document["token_endpoint"]), method="POST", body=body, headers=headers
         )
         if status != 200:
             # The body is not echoed. A token endpoint's error can carry the
@@ -336,10 +380,27 @@ class OidcProvider(IdentityProvider):
         from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
         def find(keys: list[dict[str, Any]]) -> dict[str, Any] | None:
-            for key in keys:
+            # A real JWKS is not one key. Providers publish the outgoing and
+            # incoming signing keys through a rotation, and several publish
+            # encryption keys in the same document -- so `use` and `alg` are
+            # filtered before anything else. Verifying a signature against a
+            # key its owner published for encryption is not an attack anybody
+            # needs to mount; it is just wrong, and it fails confusingly.
+            usable = [
+                key
+                for key in keys
+                if key.get("use") in (None, "sig")
+                and key.get("alg") in (None, algorithm)
+                and key.get("kty") in ("RSA", "EC")
+            ]
+            for key in usable:
                 if kid is not None and key.get("kid") != kid:
                     continue
-                if kid is None and len(keys) != 1:
+                # No `kid` in the header is legal and only unambiguous when the
+                # issuer publishes exactly one usable key. Picking the first of
+                # several would be choosing a key at random and calling the
+                # result verified.
+                if kid is None and len(usable) != 1:
                     return None
                 return key
             return None

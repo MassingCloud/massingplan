@@ -116,8 +116,19 @@ marketing document.
   reason self-service registration was changed. Users are matched on
   `issuer#sub`, never on email, because an address at an IdP is reallocatable.
 
-  It has not been tested against a commercial IdP. The suite runs a fake issuer
-  signing real RSA tokens, which proves the checks and not the interop.
+  Client authentication at the token endpoint follows the discovery document's
+  `token_endpoint_auth_methods_supported` — `client_secret_basic` preferred,
+  `client_secret_post` where that is all the issuer accepts, and an explicit
+  refusal naming both lists when it accepts neither. `private_key_jwt` and
+  `tls_client_auth` are not implemented.
+
+  **It has not been tested against a commercial IdP,** and that gap is narrower
+  than it was rather than closed. `tests/test_oidc_interop.py` builds the fake
+  issuer into the other shapes the specification allows — POST-only client
+  authentication, ES256 signing, a JWKS carrying both sides of a rotation, a
+  JWKS carrying encryption keys — because those, not the cryptography, are what
+  a first run against Entra or Okta usually breaks on. What remains untested is
+  everything a specific vendor does that the specification does not describe.
 - **Rate limiting is per-process.** Credential endpoints and the expensive
   compute endpoints are limited, but the store is in-memory: with four workers
   the effective limit is four times what was configured. The app logs a warning

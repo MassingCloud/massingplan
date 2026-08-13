@@ -12,7 +12,7 @@ import pytest
 
 from massingplan.core.constraints import ConstraintType
 from massingplan.core.health import HIGH_FLOAT_DAYS, PROBE_DAYS, assess
-from massingplan.core.network import Link, RelationType, SchedulerOptions, Task
+from massingplan.core.network import ActivityKind, Link, RelationType, SchedulerOptions, Task
 from massingplan.core.progress import build_report
 from massingplan.core.risk import (
     Distribution,
@@ -411,3 +411,93 @@ def test_the_risk_result_is_json_safe(five_day) -> None:  # type: ignore[no-unty
 
     tasks, links = chain(3)
     json.dumps(simulate(tasks, links, {"5D": five_day}, iterations=50, data_date=JUN1).to_dict())
+
+
+# -- the forecast and the schedule name the same day -------------------------
+
+
+def _flat(tasks):  # type: ignore[no-untyped-def]
+    """Estimates with no spread, so every iteration reproduces the CPM run."""
+    return [
+        DurationEstimate(
+            t.id, float(t.duration_days), float(t.duration_days), float(t.duration_days)
+        )
+        for t in tasks
+    ]
+
+
+def test_the_forecast_reports_the_same_finish_the_schedule_does(five_day) -> None:  # type: ignore[no-untyped-def]
+    """With no spread every iteration is the deterministic run, so every
+    percentile must land on the date the activity table shows.
+
+    It did not. `simulate` converted the finish with a bare `day_of`, which
+    names the day *after* the last one worked -- so the whole forecast, P10
+    through P90, sat one day later than the project finish printed beside it.
+    A P80 is read off against a contract date.
+    """
+    tasks = [Task("A", "Walls", 5, "5D"), Task("B", "Roof", 3, "5D")]
+    links = [Link("A", "B", RelationType.FS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": five_day}, data_date=date(2026, 6, 1))
+    result = simulate(
+        tasks,
+        links,
+        {"5D": five_day},
+        estimates=_flat(tasks),
+        iterations=25,
+        data_date=date(2026, 6, 1),
+    )
+    assert result.deterministic_finish == outcome.project_finish
+    for p in (0, 10, 50, 80, 90, 100):
+        assert result.percentile(p) == outcome.project_finish, f"P{p}"
+
+
+def test_a_forecast_never_lands_on_a_day_nobody_works(five_day) -> None:  # type: ignore[no-untyped-def]
+    """The half-open boundary is frequently a Saturday.
+
+    Converting it directly reported project finishes on the weekend -- a
+    tell that the number had not been through `_present` at all.
+    """
+    tasks = [Task("A", "Walls", 5, "5D")]  # Mon-Fri, boundary falls on the Saturday
+    result = simulate(
+        tasks,
+        [],
+        {"5D": five_day},
+        estimates=_flat(tasks),
+        iterations=10,
+        data_date=date(2026, 6, 1),
+    )
+    assert result.deterministic_finish is not None
+    assert result.deterministic_finish.weekday() < 5, result.deterministic_finish
+    assert all(f.weekday() < 5 for f in result.finishes)
+
+
+def test_a_completion_milestone_is_forecast_at_its_own_date(five_day) -> None:  # type: ignore[no-untyped-def]
+    """The case every construction programme ends in, and the worst of the set.
+
+    A finish milestone's start and finish are one instant, so the bare
+    conversion was out by three days here, not one.
+    """
+    tasks = [
+        Task("A", "Walls", 5, "5D"),
+        Task("PC", "Practical Completion", 0, "5D", kind=ActivityKind.FINISH_MILESTONE),
+    ]
+    links = [Link("A", "PC", RelationType.FS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": five_day}, data_date=date(2026, 6, 1))
+    result = simulate(
+        tasks,
+        links,
+        {"5D": five_day},
+        estimates=_flat(tasks),
+        iterations=10,
+        data_date=date(2026, 6, 1),
+    )
+    assert result.deterministic_finish == outcome.project_finish == date(2026, 6, 5)
+
+
+def test_the_percentiles_never_go_backwards(five_day) -> None:  # type: ignore[no-untyped-def]
+    tasks = [Task(f"A{i}", f"Act {i}", 2 + i, "5D") for i in range(6)]
+    links = [Link(f"A{i - 1}", f"A{i}", RelationType.FS, 0) for i in range(1, 6)]
+    result = simulate(tasks, links, {"5D": five_day}, iterations=400, data_date=date(2026, 6, 1))
+    dates = [result.percentile(p) for p in (0, 10, 25, 50, 75, 80, 90, 100)]
+    assert dates == sorted(d for d in dates if d is not None)
+    assert all(d is not None and d.weekday() < 5 for d in dates)

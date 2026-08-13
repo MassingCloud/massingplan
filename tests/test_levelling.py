@@ -9,17 +9,19 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import date
 
 from massingplan.core.levelling import (
     DEFAULT_PRIORITY,
+    LevellingCandidate,
     LevellingHorizon,
     LevellingMode,
     LevellingRequest,
     default_priority,
     level,
 )
-from massingplan.core.network import Link, Task
+from massingplan.core.network import Link, RelationType, Task
 from massingplan.core.resources import (
     Demand,
     ResourceAvailability,
@@ -355,9 +357,11 @@ def test_the_objective_tuple_is_what_a_search_would_minimise(five_day) -> None: 
 
 _DETERMINISM_PROBE = """
 import sys
+from dataclasses import replace
 from datetime import date
 sys.path.insert(0, %r)
 from massingplan.core.levelling import (
+    LevellingCandidate,
     LevellingHorizon, LevellingRequest, level,
 )
 from massingplan.core.network import Task
@@ -401,3 +405,151 @@ def test_the_same_input_levels_identically_under_different_hash_seeds() -> None:
     assert len(outputs) == 1, f"levelling differed between hash seeds: {outputs}"
     # And it actually did something, so the assertion above is not vacuous.
     assert outputs and next(iter(outputs))
+
+
+# -- levelling and the logic it is levelling -------------------------------
+
+
+def test_delaying_an_activity_delays_what_waits_on_it(five_day) -> None:  # type: ignore[no-untyped-def]
+    """A and B both want the only crew on Monday; C follows B.
+
+    A drives a ten-day chain, so it has no float and takes the crew first.
+    B(2) is pushed off Mon 1 June to Wed 3 June. C is tied FS to B and the CPM
+    started it Wed 3 June, when B still finished on the Tuesday.
+
+    The precedence floor was C's *original* CPM start, so C stayed on Wed 3
+    June -- the day B now starts, two days before B finishes. C waits on B and
+    begins before it. Nothing in the result said so: the histogram is flat, the
+    move list is short, and the schedule is impossible.
+    """
+    tasks = [
+        Task("A", "Slab pour A", 2, "5D"),
+        Task("D", "Cure and backprop", 10, "5D"),
+        Task("B", "Slab pour B", 2, "5D"),
+        Task("C", "Strike formwork", 1, "5D"),
+    ]
+    links = [Link("A", "D", RelationType.FS, 0), Link("B", "C", RelationType.FS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": five_day}, data_date=JUN1)
+    assert outcome.dates["B"].start == date(2026, 6, 1)
+    assert outcome.dates["C"].start == date(2026, 6, 3)
+
+    result = level(
+        LevellingRequest(
+            outcome=outcome,
+            tasks=tasks,
+            links=links,
+            calendars={"5D": five_day},
+            demands=[Demand("A", "CREW", 1.0), Demand("B", "CREW", 1.0)],
+            availability=[ResourceAvailability("CREW", units_per_day=1.0)],
+            horizon=LevellingHorizon.EXTEND_FINISH,
+            mode=LevellingMode.APPLIED,
+        )
+    )
+    b_start, b_finish = result.spans["B"]
+    c_start, _ = result.spans["C"]
+    assert b_start == date(2026, 6, 3), "B should have been pushed off the shared crew"
+    assert c_start > b_finish, f"C starts {c_start}, B finishes {b_finish}"
+    assert c_start == date(2026, 6, 5)
+
+
+def test_a_successor_is_placed_after_its_predecessor_not_merely_after_it_in_priority(
+    five_day,  # type: ignore[no-untyped-def]
+) -> None:
+    """A zero-duration milestone ties for late start with the work behind it.
+
+    An SS link ties predecessor and successor to the same late start, so the
+    rule falls through to longest-first -- and P(2) is shorter than the S(5)
+    that waits on it. The order comes out A, S, P: the successor is positioned
+    against a predecessor that has no position yet, and an unplaced predecessor
+    imposes no floor at all. Placing P afterwards then moves it past S.
+
+    A positive-duration FS predecessor cannot show this; its late start is
+    strictly earlier by its own duration, so it always sorts first. SS is where
+    the sorted list and the precedence order come apart.
+    """
+    tasks = [
+        Task("A", "Hoist run", 5, "5D"),  # sorts first, takes the crew
+        Task("P", "Pour", 2, "5D"),
+        Task("S", "Follow-on", 5, "5D"),
+    ]
+    links = [Link("P", "S", RelationType.SS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": five_day}, data_date=JUN1)
+
+    ranked = sorted(
+        (
+            LevellingCandidate(
+                t.id,
+                outcome.network.late_start[t.id],
+                outcome.network.total_float_days[t.id] or 0,
+                t.duration_days,
+            )
+            for t in tasks
+        ),
+        key=default_priority,
+    )
+    assert [c.activity_id for c in ranked] == ["A", "S", "P"], "the premise of this test"
+
+    result = level(
+        LevellingRequest(
+            outcome=outcome,
+            tasks=tasks,
+            links=links,
+            calendars={"5D": five_day},
+            demands=[Demand("A", "CREW", 1.0), Demand("P", "CREW", 1.0)],
+            availability=[ResourceAvailability("CREW", units_per_day=1.0)],
+            horizon=LevellingHorizon.EXTEND_FINISH,
+            mode=LevellingMode.APPLIED,
+        )
+    )
+    p_start, _ = result.spans["P"]
+    s_start, _ = result.spans["S"]
+    assert p_start == date(2026, 6, 8), "P should have been pushed off the shared crew"
+    assert s_start >= p_start, f"SS broken: P starts {p_start}, S starts {s_start}"
+
+
+def test_within_float_reports_the_finish_it_produced(five_day) -> None:  # type: ignore[no-untyped-def]
+    """The horizon is kept by the algorithm, not by overwriting the answer.
+
+    `finish_after` used to be reassigned to `finish_before` in this mode, so
+    the field could not have disagreed however wrong the placement was. It is
+    now the real maximum of the levelled spans, and it matches because every
+    activity is bounded at its own late start.
+    """
+    tasks, outcome, demands, availability = two_activities_one_crew(five_day)
+    result = level(
+        LevellingRequest(
+            outcome=outcome,
+            tasks=tasks,
+            links=[],
+            calendars={"5D": five_day},
+            demands=demands,
+            availability=availability,
+            horizon=LevellingHorizon.WITHIN_FLOAT,
+            mode=LevellingMode.APPLIED,
+        )
+    )
+    assert result.finish_after == max(span[1] for span in result.spans.values())
+    assert result.finish_after == result.finish_before
+    assert result.finish_moved_days == 0
+
+
+def test_a_result_that_raises_a_peak_says_so(five_day) -> None:  # type: ignore[no-untyped-def]
+    """First-fit can leave a resource worse than it found it. Say which."""
+    tasks, outcome, demands, availability = two_activities_one_crew(five_day)
+    result = level(
+        LevellingRequest(
+            outcome=outcome,
+            tasks=tasks,
+            links=[],
+            calendars={"5D": five_day},
+            demands=demands,
+            availability=availability,
+            horizon=LevellingHorizon.EXTEND_FINISH,
+            mode=LevellingMode.APPLIED,
+        )
+    )
+    assert result.raised_peaks == ()
+    assert result.to_dict()["raised_peaks"] == []
+
+    worse = replace(result, peak_after={"CREW": 9.0}, peak_before={"CREW": 2.0})
+    assert worse.raised_peaks == ("CREW",)

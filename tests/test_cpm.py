@@ -653,3 +653,92 @@ def test_the_precedence_stack_holds_when_everything_applies_at_once(five_day) ->
     # (3) the mandatory constraint yielded to recorded history, and said so.
     assert len(result.violations) == 1
     assert result.violations[0].overridden_by == "actual_dates"
+
+
+# -- float that is actually there ------------------------------------------
+#
+# Both of the following were found by generating random networks and checking
+# invariants, not by reading the code. The whole suite passed with the bug in
+# place, which is what a randomised probe is for.
+
+
+def test_an_activity_cannot_finish_after_the_project_does(five_day) -> None:  # type: ignore[no-untyped-def]
+    """Late finish is capped at the deadline whether or not there are successors.
+
+    The backward pass took `latest` purely from an activity's successors and
+    only fell back to the deadline when there were none. For FS and SS that is
+    harmless -- the successor's own late finish already respects the deadline.
+    **SF and FF bound the predecessor's start from the successor's finish**,
+    which left the predecessor free to finish after the project did.
+
+    By hand, all on Mon-Fri from Monday 1 June 2026:
+
+    * A runs 1--5 June (5 days).
+    * B is SF-linked to A with no lag, so B must *finish* on or after A starts.
+      B runs 1--10 June (8 days) -- its own earliest start, unconstrained.
+    * The project finishes 10 June, the later of the two.
+
+    A finishes 5 June, so it has three working days of float before its own
+    finish reaches the 10th. Without the cap its late finish came out well past
+    the project end and it reported far more.
+    """
+    cals = {"5D": five_day}
+    tasks = [
+        Task(id="A", name="A", duration_days=5, calendar_id="5D"),
+        Task(id="B", name="B", duration_days=8, calendar_id="5D"),
+    ]
+    links = [Link("A", "B", RelationType.SF, 0)]
+    result = calculate(tasks, links, cals, data_date=JUN1)
+
+    assert d(result, "A") == (date(2026, 6, 1), date(2026, 6, 5))
+    assert d(result, "B") == (date(2026, 6, 1), date(2026, 6, 10))
+    assert day_of(result.project_finish - 1) == date(2026, 6, 10)
+
+    # The cap, stated directly: no activity's late finish may exceed the
+    # project's finish.
+    for aid in ("A", "B"):
+        assert result.late_finish[aid] <= result.project_finish, (
+            f"{aid} is allowed to finish after the project does"
+        )
+    assert result.total_float_days["A"] == 3
+    assert result.total_float_days["B"] == 0
+
+
+def test_the_float_it_reports_is_the_float_it_has(five_day) -> None:  # type: ignore[no-untyped-def]
+    """The property behind the previous test, measured rather than asserted.
+
+    Delay the activity by exactly its reported total float and the project
+    finish must not move; delay it by one more and it must. That is what total
+    float *means*, and it is the check that would have caught the bug without
+    anybody reasoning about SF semantics at all.
+    """
+    cals = {"5D": five_day}
+
+    def run(delay_to: date | None):  # type: ignore[no-untyped-def]
+        tasks = [
+            Task(
+                id="A",
+                name="A",
+                duration_days=5,
+                calendar_id="5D",
+                constraint=ConstraintType.START_ON_OR_AFTER if delay_to else ConstraintType.NONE,
+                constraint_date=delay_to,
+            ),
+            Task(id="B", name="B", duration_days=8, calendar_id="5D"),
+        ]
+        return calculate(tasks, [Link("A", "B", RelationType.SF, 0)], cals, data_date=JUN1)
+
+    baseline = run(None)
+    float_days = baseline.total_float_days["A"]
+    assert float_days == 3
+
+    # Monday 1 June + 3 working days = Thursday 4 June.
+    on_the_nose = run(date(2026, 6, 4))
+    assert on_the_nose.project_finish == baseline.project_finish, (
+        "spending exactly the reported float moved the project"
+    )
+
+    one_too_many = run(date(2026, 6, 5))
+    assert one_too_many.project_finish > baseline.project_finish, (
+        "one day past the reported float did not move the project, so the float is understated"
+    )

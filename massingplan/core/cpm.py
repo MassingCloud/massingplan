@@ -507,8 +507,27 @@ def calculate(
             if latest is None or bound < latest:
                 latest = bound
 
-        if latest is None:
-            latest = deadline
+        # Capped at the deadline whether or not this activity has successors.
+        #
+        # It used to be `if latest is None: latest = deadline`, so an activity
+        # with successors took its late finish purely from them. For FS and SS
+        # that is harmless -- the successor's own late finish already respects
+        # the deadline, and the bound propagates back through it. For **SF and
+        # FF it is not**: those bound the predecessor's *start* from the
+        # successor's *finish*, which leaves the predecessor free to finish
+        # after the project does.
+        #
+        # A three-activity network was enough: an activity SF-linked to the
+        # last one reported five days of total float and moved the project
+        # finish when it slipped two. Float is what a planner spends, and float
+        # that is not there is spent anyway.
+        #
+        # No activity may finish after the project finishes -- the project
+        # finish is the last finish, so delaying anything past it moves it by
+        # definition. The cap therefore only ever lowers a late finish, which
+        # can remove phantom float and never invent it. Applied *before* the
+        # constraint block below, so a mandatory constraint still overrides.
+        latest = deadline if latest is None else min(latest, deadline)
 
         if task.constraint is not ConstraintType.NONE and task.constraint_date is not None:
             cdate = instant_of(task.constraint_date)

@@ -22,7 +22,13 @@ from massingplan.core.model import (
     ExchangeSchedule,
     WBSNode,
 )
-from massingplan.core.network import ActivityKind, RelationType, SchedulerOptions, Task
+from massingplan.core.network import (
+    ActivityKind,
+    Link,
+    RelationType,
+    SchedulerOptions,
+    Task,
+)
 from massingplan.core.schedule import ROW_KEYS, schedule, schedule_network
 
 JUN1 = date(2026, 6, 1)
@@ -284,3 +290,63 @@ def test_relationship_types_survive_the_round_trip_into_the_network() -> None:
     ss = next(link for link in links if link.predecessor == "B")
     assert ss.type is RelationType.SS
     assert ss.lag_days == 3
+
+
+def test_the_project_finish_matches_the_activity_that_finishes_last() -> None:
+    """A schedule ending in a completion milestone reported the wrong finish.
+
+    `project_finish` applied the half-open span rule -- `instant - 1`, the last
+    day worked -- to the latest instant in the network. That is right for work
+    and wrong for a zero-duration milestone, whose start and finish are the
+    same instant and which `_present` therefore shows at its own date. So a
+    programme ending in "Practical Completion", which is how essentially every
+    construction programme ends, reported a project finish one day *before* the
+    milestone in its own activity table. Contractual dates are read off that
+    number.
+
+    Two sites converting one instant, which is the thing `_present`'s docstring
+    says it exists to prevent. The summary is now taken from the presented rows
+    rather than converted a second time, so the two cannot disagree by
+    construction.
+    """
+    from massingplan.core.timeaxis import WorkCalendar, WorkPattern
+
+    cal = WorkCalendar(id="5D", name="Mon-Fri", pattern=WorkPattern(frozenset({0, 1, 2, 3, 4})))
+    cal.bind(date(2026, 1, 1), date(2027, 12, 31))
+
+    tasks = [
+        Task(id="A", name="Fit out", duration_days=2, calendar_id="5D"),
+        Task(id="PC", name="Practical completion", duration_days=0, calendar_id="5D"),
+    ]
+    links = [Link("A", "PC", RelationType.FS, 0)]
+    outcome = schedule_network(tasks, links, {"5D": cal}, data_date=date(2026, 6, 1))
+
+    rows = {row["activity_id"]: row for row in outcome.to_rows()}
+    assert rows["A"]["finish"] == "2026-06-02"
+    assert rows["PC"]["finish"] == "2026-06-03"
+    assert outcome.project_finish == date(2026, 6, 3), (
+        "the summary must not finish before the milestone in its own table"
+    )
+
+    # The general form, so this cannot regress for some other shape of tail.
+    assert outcome.project_finish == max(d.finish for d in outcome.dates.values())
+
+
+def test_the_project_finish_still_matches_when_the_tail_is_ordinary_work() -> None:
+    """The other direction: fixing the milestone case must not shift a normal
+    one by a day, which is what a careless `+ 1` would do.
+    """
+    from massingplan.core.timeaxis import WorkCalendar, WorkPattern
+
+    cal = WorkCalendar(id="5D", name="Mon-Fri", pattern=WorkPattern(frozenset({0, 1, 2, 3, 4})))
+    cal.bind(date(2026, 1, 1), date(2027, 12, 31))
+
+    tasks = [
+        Task(id="A", name="A", duration_days=2, calendar_id="5D"),
+        Task(id="B", name="B", duration_days=3, calendar_id="5D"),
+    ]
+    outcome = schedule_network(
+        tasks, [Link("A", "B", RelationType.FS, 0)], {"5D": cal}, data_date=date(2026, 6, 1)
+    )
+    # Mon 1, Tue 2 for A; Wed 3, Thu 4, Fri 5 for B.
+    assert outcome.project_finish == date(2026, 6, 5)

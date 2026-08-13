@@ -284,12 +284,30 @@ def _outcome(
     if project_cal is not None:
         duration = project_cal.count_working_days(result.project_start, result.project_finish)
 
+    # The project finish is the latest date any activity is *presented* as
+    # finishing, not a second conversion of the same instant.
+    #
+    # It used to be `day_of(result.project_finish - 1)`, which applies the
+    # half-open span rule -- correct for work, wrong for a zero-duration
+    # milestone, whose start and finish are the same instant and which
+    # `_present` therefore shows at `day_of(start)`. A schedule ending in a
+    # completion milestone, which is how essentially every construction
+    # programme ends, reported a project finish one day *before* the milestone
+    # in its own activity table. Contractual dates are read off that number.
+    #
+    # Two sites converting one instant is exactly the thing `_present`'s
+    # docstring says it exists to prevent; this is the second site, removed.
+    latest_presented = max((d.finish for d in dates.values()), default=None)
     return ScheduleOutcome(
         data_date=day_of(result.data_date),
         project_start=day_of(result.project_start),
-        project_finish=day_of(result.project_finish - 1)
-        if result.project_finish > result.project_start
-        else day_of(result.project_finish),
+        project_finish=latest_presented
+        if latest_presented is not None
+        else (
+            day_of(result.project_finish - 1)
+            if result.project_finish > result.project_start
+            else day_of(result.project_finish)
+        ),
         duration_working_days=duration,
         dates=dates,
         longest_path=tuple(result.longest_path()),

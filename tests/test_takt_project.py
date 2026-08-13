@@ -191,6 +191,23 @@ def test_a_takt_of_zero_is_refused_with_a_reason(client, project_id) -> None:  #
     assert "at least one working day" in response.get_data(as_text=True)
 
 
+@pytest.mark.parametrize("absurd", ["1000000", "99999999999999999999"])
+def test_an_absurd_takt_is_refused_rather_than_running_off_the_calendar(
+    client, project_id, absurd
+) -> None:  # type: ignore[no-untyped-def]
+    """A query string is user input, and `int()` happily parses a twenty-digit
+    number.
+
+    The time axis is windowed, so it refuses immediately rather than trying to
+    walk 10^20 working days -- and `TimeAxisWindowError` is a `ValueError`, so
+    the route catches it. Both halves are load-bearing and neither is obvious
+    from reading one file, which is why this asserts the outcome instead.
+    """
+    response = client.get(f"/projects/{project_id}/takt?takt_days={absurd}")
+    assert response.status_code == 400, "a 500 here is reachable by typing in the URL bar"
+    assert "window" in response.get_data(as_text=True).lower()
+
+
 def test_a_project_with_no_breakdown_says_so_rather_than_erroring(client) -> None:  # type: ignore[no-untyped-def]
     bare = _upload(client, "BARE")
     page = client.get(f"/projects/{bare}/takt")

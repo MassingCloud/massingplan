@@ -440,6 +440,39 @@ def test_an_unbounded_breakdown_is_refused_before_a_single_insert(client, projec
         assert project.locations == [], "a refused breakdown must write nothing"
 
 
+@pytest.mark.parametrize("junk", ["\x00", "\x07", "\x1b", "\x7f"])
+def test_a_location_key_with_a_control_character_is_refused(client, project_id, junk) -> None:  # type: ignore[no-untyped-def]
+    """The dead end this closes, in full.
+
+    Stored, `L1\\x00` renders as "L1" -- the control character is invisible.
+    The planner types "L1" into the take-off, which matches keys exactly, and
+    is told "there is no location called 'L1'" while looking straight at it.
+    There is no way to recover from inside the UI.
+
+    Refused rather than stripped: silently editing what somebody typed would
+    turn `L\\x001` into a different location than they meant, without saying so.
+    """
+    response = client.post(
+        f"/projects/{project_id}/linear/locations", data={"locations": f"L1{junk}\nL2"}
+    )
+    assert response.status_code == 400
+    assert "control character" in response.get_data(as_text=True)
+
+    with database.session_scope() as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        assert project.locations == [], "a refused breakdown must write nothing"
+
+
+def test_the_dead_end_the_control_character_check_prevents() -> None:
+    """The parser half, so the reason the check exists is pinned rather than
+    only described. If keys ever stop matching exactly this can be deleted.
+    """
+    quantities, problems = projects.parse_quantities("L1 | 380", ["L1\x00", "L2"])
+    assert quantities == {}
+    assert problems and "no location called 'L1'" in problems[0]
+
+
 def test_a_location_line_with_no_key_is_refused(client, project_id) -> None:  # type: ignore[no-untyped-def]
     """`| Ground floor` partitions to an empty key, which stores a location the
     take-off cannot name, the chart labels with nothing, and a second one of

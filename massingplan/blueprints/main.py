@@ -483,6 +483,23 @@ def set_locations(project_id: str) -> Any:
                 "A location needs a key -- that is what the take-off and the "
                 "trades reference. A line starting with `|` has none.",
             )
+        # Refused rather than stripped. A key is matched *exactly* by the
+        # take-off parser, and a control character is invisible on the page --
+        # so `L1\x00` renders as "L1", the planner types "L1", and gets "there
+        # is no location called 'L1'" pointing at a name that is on the screen
+        # in front of them. There is no way out of that from the UI.
+        #
+        # Silently stripping would be the other option and is worse: it edits
+        # what somebody typed without saying so, and `L\x001` would quietly
+        # become a different location than they meant.
+        offending = next((ch for ch in key if ord(ch) < 32 or ord(ch) == 127), "")
+        if offending:
+            return _linear_error(
+                project,
+                f"{key!r} contains a control character (0x{ord(offending):02x}), which is "
+                "invisible here and will never match a take-off typed against it. "
+                "Retype the line -- this usually arrives by pasting from a PDF.",
+            )
         entries.append((key, name))
 
     seen = {key for key, _ in entries}

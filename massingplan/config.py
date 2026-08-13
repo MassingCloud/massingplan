@@ -30,6 +30,13 @@ class Settings:
     rate_limit_enabled: bool = field(
         default_factory=lambda: os.getenv("MASSINGPLAN_RATE_LIMIT", "1") != "0"
     )
+    #: `memory` or `database`. Memory is the default because it needs nothing,
+    #: and it is correct for exactly one worker. `database` shares one counter
+    #: across every worker and replica pointed at the same database, which is
+    #: what makes the configured limit the real one.
+    rate_limit_store: str = field(
+        default_factory=lambda: os.getenv("MASSINGPLAN_RATE_LIMIT_STORE", "memory").strip().lower()
+    )
     #: Read only to warn about it. The limiter's store is per-process, so N
     #: workers means N times the configured limit -- and a limiter that
     #: multiplies silently is worse than none, because it is believed.

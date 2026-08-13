@@ -129,11 +129,26 @@ marketing document.
   JWKS carrying encryption keys — because those, not the cryptography, are what
   a first run against Entra or Okta usually breaks on. What remains untested is
   everything a specific vendor does that the specification does not describe.
-- **Rate limiting is per-process.** Credential endpoints and the expensive
-  compute endpoints are limited, but the store is in-memory: with four workers
-  the effective limit is four times what was configured. The app logs a warning
-  at startup when it detects more than one worker, and `massingplan check`
-  prints the scope. For a real limit across replicas, put one at your ingress.
+- **Rate limiting is per-process by default, and need not be.** The in-memory
+  store is correct for exactly one worker and wrong by a factor of N for N
+  workers — a limiter that silently multiplies is worse than none, because it
+  is believed. The app still logs a warning at startup when it detects more
+  than one worker, and `massingplan check` still prints the scope.
+
+  **`MASSINGPLAN_RATE_LIMIT_STORE=database` shares one counter** across every
+  worker and replica pointed at the same database, which makes the configured
+  limit the real one. It needs migration `0009` and a database that can take a
+  small write per limited request. Three things make it actually shared rather
+  than nominally: the increment is a single `INSERT ... ON CONFLICT DO UPDATE`
+  so two workers cannot both read 19 and both write 20; the window is keyed on
+  **wall-clock** seconds, because `time.monotonic()` has a per-process origin
+  and workers using it would place one instant in different windows and keep
+  separate counts; and the counter commits in its own transaction, so a failed
+  sign-in still counts after its request rolls back.
+
+  An ingress limit remains the better control where you have one — it stops the
+  traffic before it reaches Python — but "put one at your ingress" is not an
+  answer for a deployment that has no ingress to put it at.
 - **No encryption at rest for schedule content** beyond whatever the database
   and the disk provide. Only TOTP secrets are encrypted, deliberately: an
   attacker who can read the database holds the key too, so column encryption

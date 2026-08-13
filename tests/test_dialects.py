@@ -162,3 +162,52 @@ def test_a_date_survives_sqlite_as_a_date_not_a_string(tmp_path) -> None:  # typ
         assert isinstance(again.data_date, date)
         assert not isinstance(again.data_date, datetime)
     engine.dispose()
+
+
+@needs_postgres
+def test_the_shared_rate_limit_counter_is_atomic_on_postgres() -> None:
+    """The `postgresql` branch of the upsert, which SQLite never executes.
+
+    `DatabaseStore.hit` picks its dialect at runtime, so running the whole
+    suite on SQLite leaves the Postgres statement built and never sent -- the
+    same "implemented and never executed" shape that had ES256 untested. This
+    is also where atomicity is a real question rather than one SQLite answers
+    by serialising every writer.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from massingplan.services.ratelimit import DatabaseStore, Limit
+
+    engine = create_engine(POSTGRES_URL, future=True)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+    limit = Limit(count=1000, per_seconds=60)
+    now = 1_800_000_000.0
+    attempts = 40
+
+    def one(_n: int) -> int:
+        return DatabaseStore(session_factory=factory).hit("auth.sign_in:pg", limit, now)[0]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        seen = sorted(pool.map(one, range(attempts)))
+
+    assert seen == list(range(1, attempts + 1)), (
+        f"a repeated count is a lost increment under concurrency: {seen}"
+    )
+    engine.dispose()
+
+
+@needs_postgres
+def test_the_rate_limit_window_survives_a_bigint_timestamp() -> None:
+    """`window_start` holds whole seconds of wall-clock time, which is already
+    past 2^31 and will keep growing. An INTEGER column would overflow on
+    Postgres rather than wrapping quietly.
+    """
+    engine = create_engine(POSTGRES_URL, future=True)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    columns = {c["name"]: c for c in inspect(engine).get_columns("rate_limit_hits")}
+    assert "BIGINT" in str(columns["window_start"]["type"]).upper()
+    engine.dispose()

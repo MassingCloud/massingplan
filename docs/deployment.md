@@ -60,6 +60,8 @@ Everything is read from the environment with a `MASSINGPLAN_` prefix.
 | `WEB_TIMEOUT` | `120` | A 2,000-iteration Monte Carlo is CPU-bound and slow on purpose |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Your load balancer's address. `*` lets any client spoof the address the audit log records |
 | `MASSINGPLAN_RATE_LIMIT` | `1` | `0` disables the in-app limiter |
+| `MASSINGPLAN_RATE_LIMIT_STORE` | `memory` | `database` shares one counter across every worker and replica. **Set this whenever `WEB_CONCURRENCY` is above 1** — the memory store counts per process, so N workers means N times the configured limit |
+| `MASSINGPLAN_MAX_CONCURRENT_HASHES` | `4` | Password hashes in flight. Each holds ~64MiB, so this is roughly a 256MiB ceiling; raise it only if you have sized the box |
 | `MASSINGPLAN_ENCRYPTION_KEY` | *(unset)* | Required for two-factor auth. Deliberately **not** `SECRET_KEY` — see below |
 
 ## Two-factor authentication

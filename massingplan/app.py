@@ -37,9 +37,13 @@ def create_app(settings: Any = None) -> Any:
     init_engine(resolved.database_url)
     csrf.init_app(app)
 
-    from .services.ratelimit import RateLimiter, warn_if_multi_worker
+    from .services.ratelimit import DatabaseStore, RateLimiter, warn_if_multi_worker
 
-    limiter = RateLimiter(enabled=resolved.rate_limit_enabled)
+    # `memory` unless asked otherwise, because it needs nothing configured. A
+    # deployment running more than one worker wants `database`, which is what
+    # makes the configured limit the actual limit rather than N times it.
+    store = DatabaseStore() if resolved.rate_limit_store == "database" else None
+    limiter = RateLimiter(store, enabled=resolved.rate_limit_enabled)
     app.extensions["massingplan_ratelimit"] = limiter
     warn_if_multi_worker(limiter, resolved.web_concurrency)
 

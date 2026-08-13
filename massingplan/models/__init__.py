@@ -20,6 +20,7 @@ from .identity import (
 )
 from .lastplanner import CommitmentRow, ConstraintRow, WeeklyPlanRow
 from .locations import LinearActivity, LinearQuantity, ProjectLocation
+from .ratelimit import RateLimitHit
 from .schedule import (
     Activity,
     Assignment,
@@ -57,6 +58,7 @@ __all__ = [
     "Permission",
     "Project",
     "ProjectLocation",
+    "RateLimitHit",
     "Relationship",
     "Resource",
     "Role",

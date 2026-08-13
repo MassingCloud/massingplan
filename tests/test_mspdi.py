@@ -6,6 +6,8 @@ from datetime import date
 
 import pytest
 
+from massingplan.core.constraints import ConstraintType
+from massingplan.core.model import Calendar, ExchangeActivity, ExchangeSchedule
 from massingplan.core.mspdi import (
     MSPDI_LINK_TYPES,
     MSPDIError,
@@ -15,7 +17,7 @@ from massingplan.core.mspdi import (
     read_mspdi,
     write_mspdi,
 )
-from massingplan.core.network import RelationType
+from massingplan.core.network import ActivityKind, RelationType
 from massingplan.core.schedule import schedule
 
 
@@ -294,3 +296,113 @@ def test_there_is_no_mpp_writer_and_the_reason_is_actionable() -> None:
     reason = mpp_unavailable_reason()
     assert "MSPDI" in reason
     assert "proprietary" in reason
+
+
+# --- Microsoft's constraint codes -------------------------------------------
+#
+# Found by round-tripping random schedules and comparing the *computed* dates,
+# not the bytes. Every one of these read back with its early dates intact --
+# which is exactly why nobody noticed. The damage was all on the late side.
+
+
+def _pinned(constraint: str, day: str = "2026-06-10") -> ExchangeSchedule:
+    """One 5-day task with no predecessors and a constraint, scheduled."""
+    start = date(2026, 6, 1)
+    return ExchangeSchedule(
+        project_id="P",
+        project_name="P",
+        data_date=start,
+        planned_start=start,
+        default_calendar_id="CAL5",
+        calendars=[
+            Calendar(id="CAL5", name="Mon-Fri", working_weekdays=frozenset({0, 1, 2, 3, 4}))
+        ],
+        activities=[
+            ExchangeActivity(
+                id="A",
+                name="work",
+                kind=ActivityKind.TASK,
+                calendar_id="CAL5",
+                duration_days=5,
+                constraint=ConstraintType(constraint),
+                constraint_date=date.fromisoformat(day),
+            )
+        ],
+    )
+
+
+def test_must_start_on_is_read_as_a_pin_and_not_as_a_floor() -> None:
+    """Code 2 is Must Start On -- two-sided. Read as a floor it invents float.
+
+    The giveaway is that the *dates* are identical either way. A one-sided
+    floor holds the early start exactly where the pin does; it just stops
+    holding the late start, so the activity gains slack it does not have and
+    reports itself uncritical. Assert on the float, because the dates cannot
+    tell the two apart.
+    """
+    before = _pinned("start_on")
+    after = read_mspdi(write_mspdi(before))
+
+    assert after.activities[0].constraint is ConstraintType.START_ON
+    assert (
+        schedule(after).dates["A"].total_float_days
+        == schedule(before).dates["A"].total_float_days
+        == 0
+    )
+
+
+def test_must_finish_on_does_not_become_finish_no_earlier_than() -> None:
+    """Codes 3 and 6 are different constraints; the table mapped both to 6.
+
+    No MSPDI file, however written, could produce a FINISH_ON.
+    """
+    assert read_mspdi(write_mspdi(_pinned("finish_on"))).activities[0].constraint is (
+        ConstraintType.FINISH_ON
+    )
+    assert read_mspdi(write_mspdi(_pinned("finish_on_or_after"))).activities[0].constraint is (
+        ConstraintType.FINISH_ON_OR_AFTER
+    )
+
+
+def test_every_microsoft_constraint_code_round_trips_to_itself() -> None:
+    """The whole table both ways, so a future tidy-up cannot re-pair them."""
+    for value in (
+        "start_on",
+        "finish_on",
+        "start_on_or_after",
+        "start_on_or_before",
+        "finish_on_or_after",
+        "finish_on_or_before",
+    ):
+        back = read_mspdi(write_mspdi(_pinned(value))).activities[0].constraint
+        assert back is ConstraintType(value), f"{value} came back as {back.value}"
+
+
+def test_a_mandatory_constraint_is_written_as_a_pin_and_the_loss_is_reported() -> None:
+    """MS Project has nothing that overrides logic, so this one cannot survive.
+
+    It degrades to the two-sided pin rather than the one-sided floor: the
+    conflict then still shows up as negative float instead of vanishing.
+    """
+    source = _pinned("mandatory_start")
+    back = read_mspdi(write_mspdi(source))
+
+    assert source.issues.has("MSPDI.TASK.MANDATORY_DOWNGRADED")
+    assert back.activities[0].constraint is ConstraintType.START_ON
+    assert back.activities[0].constraint_date == date(2026, 6, 10)
+
+
+def test_a_milestone_reads_back_at_the_date_ms_project_shows_it() -> None:
+    """`<Milestone>` is one boolean for both milestone kinds.
+
+    Read as a *finish* milestone it is snapped back to the previous working
+    day -- a date the file itself does not contain and MS Project never
+    displays. A start milestone shows where the file says.
+    """
+    source = _pinned("none")
+    source.activities[0].kind = ActivityKind.START_MILESTONE
+    source.activities[0].duration_days = 0
+
+    back = read_mspdi(write_mspdi(source))
+    assert back.activities[0].kind is ActivityKind.START_MILESTONE
+    assert schedule(back).dates["A"].start == schedule(source).dates["A"].start

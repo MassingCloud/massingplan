@@ -269,3 +269,83 @@ def test_a_synced_tree_reports_in_sync(tmp_path: Path, capsys) -> None:  # type:
 
     assert vendor.sync(target, check=True) == 0
     assert "in sync" in capsys.readouterr().out
+
+
+# -- staging: the kit is built here and pulled, never pushed -----------------
+
+
+def test_a_sync_stages_a_tree_the_consumer_adopts_with_one_copy() -> None:
+    """The default target is a staging tree in *this* repo, shaped like
+    `services/api/`, so adoption is `cp -r dist/vendor/services/api/. services/api/`.
+
+    Asserted on the path rather than the copy, because the shape is what makes
+    the copy a single move: `sync()` derives the adapter root from
+    `target.parent.parent`, so a target that is not `<root>/src/massingplan`
+    scatters the adapter somewhere the consumer has to go and find.
+    """
+    from scripts.vendor_to_massing import MASSING_TARGET, STAGE_TARGET
+
+    assert STAGE_TARGET.parts[-3:] == ("src", "massingplan") or STAGE_TARGET.parts[-2:] == (
+        "src",
+        "massingplan",
+    )
+    assert STAGE_TARGET.parent.parent.name == "api"
+    assert STAGE_TARGET.parent.parent.parent.name == "services"
+    assert REPO in STAGE_TARGET.parents, "a sync must not write outside this repo by default"
+    assert REPO not in MASSING_TARGET.parents
+
+
+def test_the_staged_tree_runs_the_gate_where_it_lands(tmp_path: Path) -> None:
+    """Build the kit the way the script does and run its gate from the result.
+
+    The `consumer` fixture assembles the layout by hand from `PLACEMENT`; this
+    goes through `sync()` itself, so a change to the script that puts a file
+    somewhere unusable fails here rather than in the adopting repo.
+    """
+    from scripts.vendor_to_massing import sync
+
+    target = tmp_path / "dist" / "vendor" / "services" / "api" / "src" / "massingplan"
+    assert sync(target, check=False) == 0
+
+    api = target.parent.parent
+    assert (api / "test_mp_engine.py").is_file()
+    assert (api / "src" / "aec_api" / "schedule_engine.py").is_file()
+    assert (target / "VENDOR.md").is_file()
+    assert (target / "core" / "cpm.py").is_file()
+
+    result = _run(api, "test_mp_engine.py")
+    assert result.returncode == 0, (
+        f"the staged kit's gate failed where the script put it\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+    assert "checks passed" in result.stdout, result.stdout
+
+
+def test_the_engine_is_never_written_into_massing_by_default() -> None:
+    """`--massing` reads. It refuses to write, and the refusal is the point.
+
+    massingplan is standalone and gets *pulled in*; a script that writes into
+    another repo's working tree lands changes its owner did not ask for today.
+    """
+    script = REPO / "scripts" / "vendor_to_massing.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--massing"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "--check" in result.stderr, result.stderr
+
+    both = subprocess.run(
+        [sys.executable, str(script), "--massing", "--target", "x"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert both.returncode != 0
+    assert "one" in both.stderr, both.stderr

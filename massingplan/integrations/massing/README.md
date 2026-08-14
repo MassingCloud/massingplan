@@ -69,11 +69,33 @@ implementations reading an input that is wrong.
 
 ## Adopting
 
+Two steps, and the second one belongs to massing. Building the kit writes
+nothing outside this repo:
+
 ```bash
-# from a massingplan checkout, with massing on a branch of its own choosing
-python scripts/vendor_to_massing.py --target <massing>/services/api/src/massingplan
-cd <massing>/services/api && python test_mp_engine.py
+# 1. from a massingplan checkout -- stages into dist/vendor/, pushes nothing
+python scripts/vendor_to_massing.py
+
+# 2. from massing, on a branch of its own choosing
+cp -r <massingplan>/dist/vendor/services/api/. services/api/
+cd services/api && python test_mp_engine.py
 ```
+
+`dist/vendor/services/api/` mirrors massing's `services/api/`, so that copy
+lands the engine, the three adapter modules and the conformance gate in one
+move with no path rewriting. `dist/` is gitignored — the kit is built on
+demand, exactly as `massingpdf` builds its own `dist/`, so a second copy of
+`core/` never sits committed beside the first going quietly out of date.
+
+To see what has moved upstream before taking it:
+
+```bash
+python scripts/vendor_to_massing.py --check --massing
+```
+
+That reports drift against massing's existing copy and writes nothing. It is
+the only mode that reads that tree at all; `--massing` refuses to run without
+`--check`, because this repo stages and massing pulls.
 
 The sync refuses to produce a meaningful pin from a dirty upstream tree — it
 warns, and the recorded SHA then describes something that was never committed.

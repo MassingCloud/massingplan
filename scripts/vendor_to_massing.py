@@ -25,11 +25,24 @@ nobody has noticed yet:
 * **The pin is recorded.** `VENDOR.md` carries the upstream SHA and the exact
   commands to re-sync.
 
+**A sync stages, it does not push.** By default this builds the kit into
+`dist/vendor/` in this repo, laid out exactly as the consumer's
+`services/api/`, and the consumer copies it across when they are ready. That
+direction is the point of the extraction: massingplan is standalone and gets
+*pulled in*, and a script that writes into somebody else's working tree lands
+changes they did not ask for today. `--target` still points anywhere, for
+whoever is doing the adopting.
+
 Usage::
 
-    python scripts/vendor_to_massing.py                 # default target
-    python scripts/vendor_to_massing.py --target PATH
-    python scripts/vendor_to_massing.py --check         # report drift, change nothing
+    python scripts/vendor_to_massing.py                 # stage into dist/vendor/
+    python scripts/vendor_to_massing.py --check         # drift vs the staged kit
+    python scripts/vendor_to_massing.py --check --massing   # drift vs massing's copy
+    python scripts/vendor_to_massing.py --target PATH   # write somewhere specific
+
+To adopt the staged kit, from the consumer::
+
+    cp -r <massingplan>/dist/vendor/services/api/. <massing>/services/api/
 """
 
 from __future__ import annotations
@@ -45,7 +58,25 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "massingplan" / "core"
 KIT = REPO / "massingplan" / "integrations" / "massing"
-DEFAULT_TARGET = Path("C:/Server/modelmaker/services/api/src/massingplan")
+
+#: Where a sync writes by default: a staging tree **inside this repo**, shaped
+#: exactly like the consumer's `services/api/`, so adopting it is one directory
+#: copy and no path rewriting.
+#:
+#: This repo does not write into massing. The engine is *pulled* on massing's
+#: own timing, which is the whole reason it was extracted, and a push lands
+#: changes in a working tree whose owner did not ask for them today.
+#:
+#: `dist/` is gitignored, matching `massingpdf`, whose `dist/` is likewise
+#: built on demand and never committed. A second copy of `core/` committed
+#: beside the first is a fork waiting to happen -- and this script exists to
+#: detect exactly that.
+STAGE_TARGET = REPO / "dist" / "vendor" / "services" / "api" / "src" / "massingplan"
+
+#: The consumer's path, kept so `--check --massing` can report drift against a
+#: real adoption without anything being written to it.
+MASSING_TARGET = Path("C:/Server/modelmaker/services/api/src/massingplan")
+DEFAULT_TARGET = STAGE_TARGET
 
 #: The adapter modules, and where they land relative to `services/api/`. Kept
 #: upstream because they change when *this* repo changes -- a new relationship
@@ -196,13 +227,33 @@ silently reverts it.
 
 ## Re-syncing
 
-From a massingplan checkout:
+**You pull; upstream does not push.** massingplan stages a kit and never writes
+into this tree, so a re-sync happens when this repo decides it should — not
+when somebody upstream runs a script.
+
+From a massingplan checkout, build the kit:
 
 ```bash
-python scripts/vendor_to_massing.py --target {target}
+python scripts/vendor_to_massing.py
 ```
 
-Or by hand:
+Then, from this repo, take it:
+
+```bash
+cp -r <massingplan>/dist/vendor/services/api/. services/api/
+```
+
+That single copy carries the engine, the adapter modules and the conformance
+gate, already in this tree's shape — `dist/vendor/services/api/` mirrors
+`services/api/`, so nothing needs rewriting.
+
+To see what has changed upstream before taking it, from massingplan:
+
+```bash
+python scripts/vendor_to_massing.py --check --massing
+```
+
+It reports drift by kind and writes nothing. Or by hand, engine only:
 
 ```bash
 rm -rf services/api/src/massingplan
@@ -350,15 +401,34 @@ def sync(target: Path, *, check: bool, engine_only: bool = False) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
+    parser.add_argument(
+        "--target",
+        type=Path,
+        default=None,
+        help=f"where to sync (default: the staging tree at {STAGE_TARGET.as_posix()})",
+    )
     parser.add_argument("--check", action="store_true", help="report drift, change nothing")
+    parser.add_argument(
+        "--massing",
+        action="store_true",
+        help=f"target massing's own copy at {MASSING_TARGET.as_posix()}",
+    )
     parser.add_argument(
         "--engine-only",
         action="store_true",
         help="sync core/ but leave the adapter alone (for a mid-review consumer)",
     )
     args = parser.parse_args()
-    return sync(args.target, check=args.check, engine_only=args.engine_only)
+    if args.target and args.massing:
+        parser.error("--target and --massing both name a destination; pass one")
+    target = args.target or (MASSING_TARGET if args.massing else STAGE_TARGET)
+    if args.massing and not args.check:
+        # Writing there is what this repo does not do. Reporting on it is fine.
+        parser.error(
+            "--massing is for --check. massingplan stages and massing pulls; "
+            "to write into that tree anyway, name it with --target."
+        )
+    return sync(target, check=args.check, engine_only=args.engine_only)
 
 
 if __name__ == "__main__":

@@ -327,6 +327,10 @@ bytes match.
 
 Each phase meets its acceptance criteria, with tests, before the next begins.
 
+**P0 through P13 have all shipped**, so this table is a record rather than a
+plan. The forward half — what comes next and what it has to prove — is
+`ROADMAP.md`.
+
 | Phase | Delivers | Acceptance |
 |---|---|---|
 | **P0** | Repo skeleton, config, adapter seams, CI | `offline`, `no-adapters`, `imports` green on an app that serves `/healthz` |

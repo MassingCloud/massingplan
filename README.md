@@ -137,6 +137,8 @@ a commercial identity provider.
 
 - `SPEC.md` — the research, the time-axis decision, the precedence stack, the
   phase plan
+- `ROADMAP.md` — what comes next, what it has to prove, and what is
+  deliberately not coming
 - `AGENTS.md` — architecture rules, golden rules, where things live
 - `CONTRIBUTING.md` — what will get a pull request sent back
 

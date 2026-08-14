@@ -137,6 +137,12 @@ def windows() -> Any:
     return jsonify(schedules.analyse_windows(_payload()))
 
 
+@bp.post("/earned-schedule")
+def earned_schedule() -> Any:
+    """How far along in time the project is, next to the metric that hides it."""
+    return jsonify(schedules.measure_earned_schedule(_payload()))
+
+
 @bp.post("/import")
 def import_schedule() -> Any:
     """Read an uploaded Primavera XER or MS Project MSPDI file."""
@@ -187,6 +193,14 @@ def capabilities() -> Any:
                 "resource_levelling",
                 "baseline_comparison_with_delay_attribution",
                 "location_based_scheduling",
+                "takt_planning",
+                "last_planner_production_control",
+                # Named with its standard, because "windows analysis" alone
+                # does not say which of the nine protocols it is -- and the
+                # observational ones and the modelled ones answer different
+                # questions from different inputs.
+                "contemporaneous_windows_analysis_aace_29r03_mip_3_3",
+                "earned_schedule",
             ],
         }
     )

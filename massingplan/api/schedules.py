@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any
 
 from ..core import compare as compare_mod
-from ..core import health, levelling, resources, risk, windows
+from ..core import earned, health, levelling, resources, risk, windows
 from ..core.constraints import parse as parse_constraint
 from ..core.model import Calendar, ExchangeSchedule
 from ..core.network import (
@@ -559,6 +559,45 @@ def compare_baselines(payload: Mapping[str, Any]) -> dict[str, Any]:
         baseline_codes=payload.get("baseline_codes"),
         current_codes=payload.get("current_codes"),
     )
+    return result.to_dict()
+
+
+def measure_earned_schedule(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Earned Schedule against a baseline of `{activity_id: [start, finish]}`.
+
+    Reported next to the classic `EV / PV` rather than instead of it, because
+    the pair is the argument: the classic index reads 1.0 at completion however
+    late the project ran, and seeing both is what makes that visible.
+    """
+    calendars = _calendars(payload.get("calendars"))
+    tasks, _links = _tasks_and_links(payload.get("activities") or [], calendars)
+
+    raw = payload.get("baseline") or {}
+    if not isinstance(raw, Mapping) or not raw:
+        raise ValidationFailed("`baseline` must map activity ids to [start, finish] dates")
+    baseline: dict[str, tuple[date, date]] = {}
+    for aid, span in raw.items():
+        if not isinstance(span, Sequence) or isinstance(span, str) or len(span) != 2:
+            raise ValidationFailed(f"baseline[{aid!r}] must be a [start, finish] pair")
+        started = _date(span[0], f"baseline[{aid}].start")
+        finished = _date(span[1], f"baseline[{aid}].finish")
+        if started is None or finished is None:
+            raise ValidationFailed(f"baseline[{aid!r}] needs both a start and a finish")
+        baseline[str(aid)] = (started, finished)
+
+    data_date = _date(payload.get("data_date"), "data_date")
+    if data_date is None:
+        raise ValidationFailed("`data_date` is required: earned schedule is measured as at a date")
+
+    try:
+        result = earned.measure(
+            tasks,
+            baseline,
+            data_date=data_date,
+            calendar=next(iter(calendars.values())),
+        )
+    except earned.EarnedScheduleError as exc:
+        raise ValidationFailed(str(exc)) from exc
     return result.to_dict()
 
 

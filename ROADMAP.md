@@ -17,16 +17,19 @@ down reads as a decision.
 |---|---|
 | Engine | Multi-calendar CPM, all four relation types, all ten constraint types, data date and progressed logic, DCMA 14-point, Monte Carlo, resource levelling, baseline comparison with delay attribution, line-of-balance, takt, Last Planner |
 | Interchange | Primavera XER read/write, Primavera P6 XML (PMXML) read/write including baselines, MS Project MSPDI read/write |
-| Forensics | Baseline comparison, and contemporaneous windows analysis (AACE 29R-03 MIP 3.3) |
+| Forensics | Baseline comparison; contemporaneous windows analysis (AACE 29R-03 MIP 3.3); impacted as-planned and collapsed as-built (MIP 3.6 and 3.9) with concurrency reported |
 | Performance | BEI and variance, plus Earned Schedule reported beside the classic index it replaces |
-| Core | ~10,000 lines, pure standard library, vendored into `ibuilder/massing` |
-| Gates | 19 CI jobs (17 definitions, `test` matrixed over 3.11/3.12/3.13); ~1,190 tests; 100% branch coverage on the calendar kernel |
+| Planning | Weather allowance in the calendar rather than in durations; schedule compression as priced options; multi-project portfolios with links across the boundary |
+| Core | ~11,600 lines, pure standard library, vendored into `ibuilder/massing` |
+| Gates | 19 CI jobs (17 definitions, `test` matrixed over 3.11/3.12/3.13); ~1,250 tests; 100% branch coverage on the calendar kernel |
 
 The engine has also been probed with generated inputs — not only the tests
 somebody thought to write. Random networks through XER (400 schedules), random
 re-baselines through the attribution invariant (800), progressed schedules
 against the precedence stack (700), the constraint table (600), line-of-balance
-flows (200), takt trains (250) and P6 XML round trips (300). Those runs found six defects, all fixed;
+flows (200), takt trains (250), P6 XML round trips (300) and the compression,
+portfolio and modelled-delay invariants (400). Those runs found eight defects,
+all fixed;
 where they found nothing, the existing tests were then deliberately broken to
 confirm the coverage was real rather than absent.
 
@@ -51,7 +54,10 @@ Three questions, and an item needs all three:
 
 ---
 
-## Next
+## Shipped since this file was written
+
+Every item below has landed. They are kept rather than deleted so the
+acceptance criterion each was held to stays readable beside the result.
 
 ### R1 — Primavera P6 XML (PMXML) read and write — **shipped**
 
@@ -87,7 +93,7 @@ a number when no time has elapsed. `core/earned.py`, thirteen tests, five
 sabotages. Kept in the list rather than deleted so the acceptance criterion it
 was held to stays readable.
 
-### R3 — Weather and calendar risk
+### R3 — Weather and calendar risk — **shipped**
 
 **Why.** A shutdown is modelled (calendar exceptions round-trip through both
 formats), but *expected* weather loss is not. On a UK or a monsoon-belt
@@ -95,12 +101,12 @@ programme it is the largest single systematic difference between a plan and an
 outcome, and it is currently absorbed into activity durations where nobody can
 see it or argue about it.
 
-**Acceptance.** Weather-allowance days per calendar per month, applied as
-non-working days rather than duration padding, so they are visible in the
-histogram and in the DCMA float profile; a schedule with the allowance removed
-finishes earlier by exactly the allowance consumed on the driving path.
+**Acceptance, met.** `core/weather.py` puts the allowance in the calendar as
+non-working days, spread evenly through each month; a day already lost to a
+shutdown is not lost twice; `without_allowance` removes only the weather days
+and reproduces the original schedule exactly. Thirteen tests, three sabotages.
 
-### R4 — Modelled delay methods (AACE MIP 3.6 and 3.9)
+### R4 — Modelled delay methods (AACE MIP 3.6 and 3.9) — **shipped**
 
 **Why.** `windows.py` is observational: it reads what the updates say and
 changes nothing. The modelled methods — impacted as-planned (additive) and
@@ -110,34 +116,49 @@ and both are a **different module** on purpose: mixing an observational method
 with a modelled one in the same call is how an analysis acquires a conclusion
 its inputs do not support.
 
-**Acceptance.** Each method names itself in its output, as `windows` does;
-inserted and removed events are listed explicitly so the "but-for" network can
-be reproduced; a modelled result can never be returned from the observational
-entry point.
+**Acceptance, met.** `core/modelled.py`. Each method names its MIP; events are
+listed with what each did alone and what they did together, and the difference
+is reported as `concurrency_days` -- the most argued number in delay disputes.
+A modelled result cannot come from `windows`: different types, different
+modules, neither importing the other. Sixteen tests, three sabotages.
 
-### R5 — Schedule compression
+### R5 — Schedule compression — **shipped**
 
 **Why.** Levelling answers "when can this be built with the crews I have".
 Nothing answers "what would it take to finish three weeks earlier", which is
 the question asked whenever a programme is late. The machinery is largely
 present: `levelling.objective()` and `priority_key` are already the hooks.
 
-**Acceptance.** Crashing (shorten driving activities by cost slope) and
-fast-tracking (convert FS to SS with overlap) reported as *options with a
-consequence*, never applied silently; each option states what it costs and what
-new risk it creates; deterministic under varied `PYTHONHASHSEED`, like
-levelling.
+**Acceptance, met.** `core/compression.py` returns options with a consequence
+and applies nothing; crashing carries a cost, fast-tracking carries a stated
+risk and no invented score; a day that buys nothing is not sold; the plan is
+identical under three hash seeds. Sixteen tests, three sabotages.
 
-### R6 — Multi-project and inter-project logic
+### R6 — Multi-project and inter-project logic — **shipped**
 
 **Why.** Every construction programme above a certain size is several
 schedules with links between them, and a shared resource pool across them.
 Today a project is scheduled alone.
 
-**Acceptance.** External links resolved across projects with the driving path
-crossing the boundary intact; a shared resource pool levelled across projects;
-the per-project answer unchanged when a project has no external links —
-asserted, so the feature cannot quietly alter single-project results.
+**Acceptance, met, with one correction.** `core/portfolio.py`. External links
+resolve across projects and the driving path crosses the boundary. The promise
+that an unlinked project is *entirely* unchanged turned out to be too broad:
+its dates are identical, but its float is measured against the programme --
+which is the right answer, since a package finishing early genuinely has slack
+against the completion it feeds. `standalone_rows_for` gives the package's own
+float back. Nineteen tests, two sabotages.
+---
+
+## Next
+
+Nothing is queued. The six items this file was written to describe have all
+shipped, and the honest position is that the next one should come from a user
+rather than from this document — the roadmap has run ahead of the evidence,
+and inventing R7 here would be picking a feature because the section has a
+heading.
+
+What is worth doing before any of that is in the list below, which is where
+the remaining known gaps actually live.
 
 ---
 

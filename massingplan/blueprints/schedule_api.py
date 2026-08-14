@@ -143,6 +143,30 @@ def earned_schedule() -> Any:
     return jsonify(schedules.measure_earned_schedule(_payload()))
 
 
+@bp.post("/modelled-delay")
+def modelled_delay() -> Any:
+    """Impacted as-planned or collapsed as-built. The method is not defaulted."""
+    return jsonify(schedules.model_delay(_payload()))
+
+
+@bp.post("/compress")
+def compress() -> Any:
+    """What finishing earlier would take. Options only -- nothing is applied."""
+    return jsonify(schedules.compress(_payload()))
+
+
+@bp.post("/portfolio")
+def portfolio() -> Any:
+    """Several projects and the links between them, in one pass."""
+    return jsonify(schedules.schedule_portfolio(_payload()))
+
+
+@bp.post("/weather")
+def weather() -> Any:
+    """Schedule with and without a weather allowance, and price the difference."""
+    return jsonify(schedules.apply_weather(_payload()))
+
+
 @bp.post("/import")
 def import_schedule() -> Any:
     """Read an uploaded Primavera XER, Primavera P6 XML, or MS Project MSPDI file."""
@@ -200,7 +224,11 @@ def capabilities() -> Any:
                 # observational ones and the modelled ones answer different
                 # questions from different inputs.
                 "contemporaneous_windows_analysis_aace_29r03_mip_3_3",
+                "modelled_delay_aace_29r03_mip_3_6_and_3_9",
                 "earned_schedule",
+                "weather_allowance",
+                "schedule_compression",
+                "multi_project_portfolio",
             ],
         }
     )

@@ -12,9 +12,20 @@ from datetime import date
 from typing import Any
 
 from ..core import compare as compare_mod
-from ..core import earned, health, levelling, resources, risk, windows
+from ..core import (
+    compression,
+    earned,
+    health,
+    levelling,
+    modelled,
+    portfolio,
+    resources,
+    risk,
+    weather,
+    windows,
+)
 from ..core.constraints import parse as parse_constraint
-from ..core.model import Calendar, ExchangeSchedule
+from ..core.model import Calendar, CalendarException, ExchangeSchedule
 from ..core.network import (
     ActivityKind,
     LagCalendar,
@@ -560,6 +571,239 @@ def compare_baselines(payload: Mapping[str, Any]) -> dict[str, Any]:
         current_codes=payload.get("current_codes"),
     )
     return result.to_dict()
+
+
+def model_delay(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Impacted as-planned or collapsed as-built, named explicitly by the caller.
+
+    The method is a required field with no default. Both alter the network and
+    they answer opposite questions, so guessing one would hand somebody a
+    counterfactual they did not ask for -- with a method name attached saying
+    they did.
+    """
+    method = str(payload.get("method") or "").strip()
+    if method not in ("impacted_as_planned", "collapsed_as_built"):
+        raise ValidationFailed(
+            "`method` must be 'impacted_as_planned' or 'collapsed_as_built'",
+            detail="both alter the network and they answer opposite questions, so there is "
+            "no safe default",
+        )
+
+    calendars = _calendars(payload.get("calendars"))
+    tasks, links = _tasks_and_links(payload.get("activities") or [], calendars)
+
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        raise ValidationFailed("`events` must be a non-empty list of delay events")
+    events = []
+    for index, entry in enumerate(raw_events):
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed(f"events[{index}] is not an object")
+        try:
+            events.append(
+                modelled.DelayEvent(
+                    id=str(entry.get("id") or ""),
+                    name=str(entry.get("name") or ""),
+                    duration_days=int(entry.get("duration_days") or 0),
+                    impacts=str(entry.get("impacts") or ""),
+                    calendar_id=(str(entry["calendar_id"]) if entry.get("calendar_id") else None),
+                    onset=_date(entry.get("onset"), f"events[{index}].onset"),
+                    responsibility=str(entry.get("responsibility") or ""),
+                )
+            )
+        except modelled.ModelledDelayError as exc:
+            raise ValidationFailed(str(exc)) from exc
+
+    run = (
+        modelled.impacted_as_planned
+        if method == "impacted_as_planned"
+        else modelled.collapsed_as_built
+    )
+    try:
+        return run(
+            tasks,
+            links,
+            calendars,
+            events=events,
+            data_date=_date(payload.get("data_date"), "data_date"),
+            options=_options(payload.get("options")),
+        ).to_dict()
+    except modelled.ModelledDelayError as exc:
+        raise ValidationFailed(str(exc)) from exc
+
+
+def compress(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Options for finishing earlier. Never applied -- that is the caller's call."""
+    calendars = _calendars(payload.get("calendars"))
+    tasks, links = _tasks_and_links(payload.get("activities") or [], calendars)
+
+    target = payload.get("target_days")
+    if target in (None, ""):
+        raise ValidationFailed("`target_days` is required: compression is toward a date")
+
+    costs = []
+    for entry in payload.get("costs") or []:
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed("each entry in `costs` must be an object")
+        try:
+            costs.append(
+                compression.CrashCost(
+                    activity_id=str(entry.get("activity_id") or ""),
+                    cost_per_day=float(entry.get("cost_per_day") or 0.0),
+                    max_days=int(entry.get("max_days") or 0),
+                )
+            )
+        except compression.CompressionError as exc:
+            raise ValidationFailed(str(exc)) from exc
+
+    pairs = [
+        (str(p.get("predecessor_id")), str(p.get("successor_id")))
+        for p in (payload.get("fast_trackable") or [])
+        if isinstance(p, Mapping)
+    ]
+    try:
+        return compression.plan(
+            tasks,
+            links,
+            calendars,
+            target_days=int(target),
+            costs=costs,
+            fast_trackable=pairs,
+            data_date=_date(payload.get("data_date"), "data_date"),
+            options=_options(payload.get("options")),
+        ).to_dict()
+    except compression.CompressionError as exc:
+        raise ValidationFailed(str(exc)) from exc
+
+
+def schedule_portfolio(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Several projects and the links between them, in one pass."""
+    calendars = _calendars(payload.get("calendars"))
+    raw_projects = payload.get("projects")
+    if not isinstance(raw_projects, list) or not raw_projects:
+        raise ValidationFailed("`projects` must be a non-empty list")
+
+    projects = []
+    for index, entry in enumerate(raw_projects):
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed(f"projects[{index}] is not an object")
+        tasks, links = _tasks_and_links(entry.get("activities") or [], calendars)
+        try:
+            projects.append(
+                portfolio.Project(
+                    id=str(entry.get("id") or ""),
+                    name=str(entry.get("name") or ""),
+                    tasks=tasks,
+                    links=links,
+                )
+            )
+        except portfolio.PortfolioError as exc:
+            raise ValidationFailed(str(exc)) from exc
+
+    external = []
+    for entry in payload.get("external_links") or []:
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed("each entry in `external_links` must be an object")
+        try:
+            relation = RelationType(str(entry.get("type") or "FS").upper())
+        except ValueError as exc:
+            raise ValidationFailed(f"unknown relationship type {entry.get('type')!r}") from exc
+        external.append(
+            portfolio.ExternalLink(
+                predecessor_project=str(entry.get("predecessor_project") or ""),
+                predecessor_id=str(entry.get("predecessor_id") or ""),
+                successor_project=str(entry.get("successor_project") or ""),
+                successor_id=str(entry.get("successor_id") or ""),
+                type=relation,
+                lag_days=int(entry.get("lag_days") or 0),
+            )
+        )
+
+    try:
+        result = portfolio.schedule_portfolio(
+            projects,
+            external,
+            calendars,
+            data_date=_date(payload.get("data_date"), "data_date"),
+            options=_options(payload.get("options")),
+        )
+    except portfolio.PortfolioError as exc:
+        raise ValidationFailed(str(exc)) from exc
+    return {
+        **result.summary(),
+        "projects": {pid: result.rows_for(pid) for pid in result.dates},
+    }
+
+
+def apply_weather(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Schedule with and without a weather allowance, and report the difference.
+
+    Both runs, because the number that matters is what the allowance cost --
+    and a single run with the days already in it cannot produce that.
+    """
+    calendars = _calendars(payload.get("calendars"))
+    tasks, links = _tasks_and_links(payload.get("activities") or [], calendars)
+    data_date = _date(payload.get("data_date"), "data_date")
+
+    raw = payload.get("allowances")
+    if not isinstance(raw, list) or not raw:
+        raise ValidationFailed("`allowances` must be a non-empty list")
+
+    model_calendars = []
+    for cal in calendars.values():
+        model_calendars.append(
+            Calendar(
+                id=cal.id,
+                name=cal.name,
+                working_weekdays=set(cal.pattern.working_weekdays),
+                exceptions=[
+                    CalendarException(day=d, working=False) for d in sorted(cal.pattern.holidays)
+                ]
+                + [
+                    CalendarException(day=d, working=True)
+                    for d in sorted(cal.pattern.extra_work_days)
+                ],
+                hours_per_day=cal.hours_per_day,
+            )
+        )
+
+    allowances = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed("each entry in `allowances` must be an object")
+        months = entry.get("days_by_month") or {}
+        try:
+            allowances.append(
+                weather.Allowance(
+                    calendar_id=str(entry.get("calendar_id") or ""),
+                    days_by_month={int(k): int(v) for k, v in months.items()},
+                )
+            )
+        except (weather.WeatherError, ValueError) as exc:
+            raise ValidationFailed(str(exc)) from exc
+
+    start = _date(payload.get("start"), "start") or data_date
+    finish = _date(payload.get("finish"), "finish")
+    if start is None or finish is None:
+        raise ValidationFailed("`start` and `finish` bound the window the allowance applies over")
+
+    try:
+        wet_calendars, applied = weather.apply_to_all(
+            model_calendars, allowances, start=start, finish=finish
+        )
+    except weather.WeatherError as exc:
+        raise ValidationFailed(str(exc)) from exc
+
+    dry = schedule_network(tasks, links, calendars, data_date=data_date)
+    wet_lookup = {c.id: c.to_work_calendar() for c in wet_calendars}
+    wet = schedule_network(tasks, links, wet_lookup, data_date=data_date)
+
+    return {
+        "without_allowance": dry.summary(),
+        "with_allowance": wet.summary(),
+        "days_lost": (wet.project_finish - dry.project_finish).days,
+        "applied": [a.to_dict() for a in applied],
+    }
 
 
 def measure_earned_schedule(payload: Mapping[str, Any]) -> dict[str, Any]:

@@ -131,6 +131,12 @@ def compare() -> Any:
     return jsonify(schedules.compare_baselines(_payload()))
 
 
+@bp.post("/windows")
+def windows() -> Any:
+    """Which period lost the time, across a series of contemporaneous updates."""
+    return jsonify(schedules.analyse_windows(_payload()))
+
+
 @bp.post("/import")
 def import_schedule() -> Any:
     """Read an uploaded Primavera XER or MS Project MSPDI file."""

@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any
 
 from ..core import compare as compare_mod
-from ..core import health, levelling, resources, risk
+from ..core import health, levelling, resources, risk, windows
 from ..core.constraints import parse as parse_constraint
 from ..core.model import Calendar, ExchangeSchedule
 from ..core.network import (
@@ -560,6 +560,51 @@ def compare_baselines(payload: Mapping[str, Any]) -> dict[str, Any]:
         current_codes=payload.get("current_codes"),
     )
     return result.to_dict()
+
+
+def analyse_windows(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Contemporaneous windows analysis over a series of dated updates.
+
+    `compare_baselines` answers "what moved between these two". This answers
+    "which period lost the time", which is the question a claim is actually
+    about -- and it is a different endpoint rather than a flag on that one
+    because the input is a *series*, and a series of two is the degenerate case
+    rather than the normal one.
+    """
+    raw = payload.get("updates")
+    if not isinstance(raw, list) or len(raw) < 2:
+        raise ValidationFailed("`updates` must be a list of at least two schedule updates")
+
+    try:
+        match = compare_mod.MatchKey(str(payload.get("match") or "id"))
+    except ValueError as exc:
+        raise ValidationFailed(f"unknown match key {payload.get('match')!r}") from exc
+
+    updates = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, Mapping):
+            raise ValidationFailed(f"updates[{index}] is not an object")
+        data_date = _date(entry.get("data_date"), f"updates[{index}].data_date")
+        if data_date is None:
+            raise ValidationFailed(f"updates[{index}] needs a `data_date`")
+        cals = _calendars(entry.get("calendars") or payload.get("calendars"))
+        tasks, links = _tasks_and_links(entry.get("activities") or [], cals)
+        updates.append(
+            windows.Update(
+                data_date=data_date,
+                outcome=_schedule(tasks, links, cals, entry),
+                tasks=tasks,
+                links=links,
+                name=str(entry.get("name") or ""),
+            )
+        )
+
+    try:
+        return windows.analyse(updates, match=match).to_dict()
+    except windows.WindowsError as exc:
+        # Refused, not approximated -- and the reason travels, because "sort
+        # your updates" is actionable and "invalid input" is not.
+        raise ValidationFailed(str(exc)) from exc
 
 
 def import_file(content: str, *, filename: str = "") -> dict[str, Any]:

@@ -36,6 +36,7 @@ from .model import (
 )
 from .network import ActivityKind, RelationType
 from .units import days_from_hours, hours_from_days
+from .xmlsafe import parse as parse_xml
 
 MSPDI_NS = "http://schemas.microsoft.com/project"
 
@@ -187,14 +188,16 @@ def format_duration_hours(hours: float) -> str:
 
 def read_mspdi(content: str) -> ExchangeSchedule:
     """Read an MSPDI document into the hub model."""
+    # This used to call `ElementTree.fromstring` directly, under a note saying
+    # the application layer hardened untrusted uploads. It does not: the only
+    # control there is a byte limit, and a billion-laughs payload is a few
+    # hundred bytes. See `xmlsafe` for the measurement.
     try:
-        root = ElementTree.fromstring(content)  # noqa: S314 - see the note below
+        root = parse_xml(content)
     except ElementTree.ParseError as exc:
         raise MSPDIError(f"not well-formed XML: {exc}") from exc
-    # `defusedxml` would be the safer parser for untrusted input, but `core` is
-    # pure stdlib by contract so the application layer is where an untrusted
-    # upload gets hardened. Recorded here so the trade-off is visible rather
-    # than accidental.
+    except ValueError as exc:
+        raise MSPDIError(str(exc)) from exc
 
     schedule = ExchangeSchedule(source_format="mspdi")
     issues = schedule.issues

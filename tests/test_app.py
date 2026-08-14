@@ -367,7 +367,10 @@ def test_capabilities_names_what_is_not_supported(client) -> None:  # type: igno
     learned it the expensive way.
     """
     caps = client.get("/api/massingplan/v1/capabilities").get_json()
-    assert caps["formats"]["read"] == ["xer", "mspdi"]
+    assert caps["formats"]["read"] == ["xer", "p6xml", "mspdi"]
+    # Every format reads and writes. A read-only one would be a real asymmetry
+    # and it belongs in this listing rather than in a support ticket.
+    assert caps["formats"]["write"] == caps["formats"]["read"]
     assert "proprietary" in caps["formats"]["unsupported"]["mpp"]
     assert "dcma_14_point" in caps["features"]
 

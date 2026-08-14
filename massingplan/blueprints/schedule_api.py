@@ -145,7 +145,7 @@ def earned_schedule() -> Any:
 
 @bp.post("/import")
 def import_schedule() -> Any:
-    """Read an uploaded Primavera XER or MS Project MSPDI file."""
+    """Read an uploaded Primavera XER, Primavera P6 XML, or MS Project MSPDI file."""
     upload = request.files.get("file")
     if upload is None:
         raise errors.ApiError(
@@ -173,8 +173,8 @@ def capabilities() -> Any:
     return jsonify(
         {
             "formats": {
-                "read": ["xer", "mspdi"],
-                "write": ["xer", "mspdi"],
+                "read": ["xer", "p6xml", "mspdi"],
+                "write": ["xer", "p6xml", "mspdi"],
                 "unsupported": {"mpp": mpp_unavailable_reason()},
             },
             "relationship_types": ["FS", "SS", "FF", "SF"],

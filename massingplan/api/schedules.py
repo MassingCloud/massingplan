@@ -654,15 +654,29 @@ def import_file(content: str, *, filename: str = "") -> dict[str, Any]:
     activity reads as critical with zero float and the page looks fine.
     """
     from ..core.mspdi import MSPDIError, read_mspdi
+    from ..core.p6xml import P6XMLError, read_p6xml
     from ..core.xer import XERError, read_xer
 
     stripped = content.lstrip()
     try:
-        schedule = read_mspdi(content) if stripped.startswith("<") else read_xer(content)
-    except (XERError, MSPDIError) as exc:
+        if not stripped.startswith("<"):
+            schedule = read_xer(content)
+        elif "APIBusinessObjects" in stripped[:4096]:
+            # Both P6 XML and MSPDI are `.xml`, so the extension cannot decide
+            # and the root element has to. Bounded to the head of the document
+            # because an activity *named* "APIBusinessObjects" further down is
+            # not evidence of anything, and scanning a 60MB export for it costs
+            # real time on every upload.
+            schedule = read_p6xml(content)
+        else:
+            schedule = read_mspdi(content)
+    except (XERError, MSPDIError, P6XMLError) as exc:
         raise Unsupported(
             f"{filename or 'the upload'} could not be read: {exc}",
-            detail="expected a Primavera .xer or an MS Project .xml (MSPDI) export",
+            detail=(
+                "expected a Primavera .xer, a Primavera P6 .xml (PMXML) or an "
+                "MS Project .xml (MSPDI) export"
+            ),
         ) from exc
 
     problems = schedule.validate()

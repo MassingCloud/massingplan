@@ -16,17 +16,17 @@ down reads as a decision.
 | | |
 |---|---|
 | Engine | Multi-calendar CPM, all four relation types, all ten constraint types, data date and progressed logic, DCMA 14-point, Monte Carlo, resource levelling, baseline comparison with delay attribution, line-of-balance, takt, Last Planner |
-| Interchange | Primavera XER read/write, MS Project MSPDI read/write |
+| Interchange | Primavera XER read/write, Primavera P6 XML (PMXML) read/write including baselines, MS Project MSPDI read/write |
 | Forensics | Baseline comparison, and contemporaneous windows analysis (AACE 29R-03 MIP 3.3) |
 | Performance | BEI and variance, plus Earned Schedule reported beside the classic index it replaces |
-| Core | ~9,250 lines, pure standard library, vendored into `ibuilder/massing` |
-| Gates | 19 CI jobs (17 definitions, `test` matrixed over 3.11/3.12/3.13); ~1,140 tests; 100% branch coverage on the calendar kernel |
+| Core | ~10,000 lines, pure standard library, vendored into `ibuilder/massing` |
+| Gates | 19 CI jobs (17 definitions, `test` matrixed over 3.11/3.12/3.13); ~1,190 tests; 100% branch coverage on the calendar kernel |
 
 The engine has also been probed with generated inputs — not only the tests
 somebody thought to write. Random networks through XER (400 schedules), random
 re-baselines through the attribution invariant (800), progressed schedules
 against the precedence stack (700), the constraint table (600), line-of-balance
-flows (200) and takt trains (250). Those runs found six defects, all fixed;
+flows (200), takt trains (250) and P6 XML round trips (300). Those runs found six defects, all fixed;
 where they found nothing, the existing tests were then deliberately broken to
 confirm the coverage was real rather than absent.
 
@@ -53,7 +53,7 @@ Three questions, and an item needs all three:
 
 ## Next
 
-### R1 — Primavera P6 XML (PMXML) read and write
+### R1 — Primavera P6 XML (PMXML) read and write — **shipped**
 
 **Why.** XER is the routine transfer format and **it does not carry
 baselines**; P6 XML does, along with the global data a restricted XER omits.
@@ -63,10 +63,14 @@ be handed over for a claim is the one that can carry them. Reading XER only
 means asking a client for eleven separate files and hoping the data dates
 survived.
 
-**Acceptance.** A P6 XML file with baselines imports as a project plus its
-baselines; read → schedule → write → read preserves the computed dates on all
-of them; every default taken emits an `Issue` naming the field. The existing
-XER round-trip probe runs against XML unchanged.
+**Acceptance, met.** `read_p6xml_all` returns every project in the document,
+so a file carrying baselines yields the series a windows analysis needs;
+read → schedule → write → read preserves the computed dates; every default
+taken emits an `Issue` naming the field. The XER round-trip probe ran against
+P6 XML unchanged — 300 random schedules, zero drift, **including finish
+milestones**, which MSPDI structurally cannot round-trip because it has one
+boolean for both milestone kinds and this format has two enum values.
+`core/p6xml.py`, 22 tests, four sabotages.
 
 ### R2 — Earned Schedule alongside the existing BEI — **shipped**
 

@@ -360,3 +360,83 @@ def test_to_rows_reports_the_last_day_worked_not_the_boundary() -> None:
     assert first["start"] == "2026-03-02"  # Monday
     assert first["finish"] == "2026-03-06"  # Friday, not the Saturday boundary
     assert date.fromisoformat(str(first["finish"])).weekday() == 4
+
+
+# -- two properties nothing was holding ------------------------------------
+#
+# Found by probing random trains and then deliberately breaking the module to
+# see what the suite would notice. It caught the `(W + Z - 1)` arithmetic, and
+# missed both of these -- which is the expected failure mode for tests written
+# by the same hand, in the same sitting, as the code.
+
+
+def test_the_gang_is_sized_by_the_heaviest_zone_not_the_average() -> None:
+    """A crew that fits the average cannot finish the worst floor in a takt.
+
+    Ten crew-days in Z0 and none in Z1, on a five-day takt. The heaviest zone
+    needs two crews; the average is five crew-days and asks for one. With one
+    crew Z0 takes ten days -- double its takt -- and the train that the whole
+    method is bought for does not run.
+
+    The average sizing produces a plan that reads as valid: the grid is intact,
+    the duration is still `(W + Z - 1) * takt`, and every hand-checked number in
+    this file still holds. Only the utilisation gives it away, by going above
+    1.0 -- work that does not fit in the time it was placed in.
+    """
+    zones = [Location("Z0", "Level 0", 0), Location("Z1", "Level 1", 1)]
+    wagons = [Wagon(id="W0", name="Frame", work_content={"Z0": 10.0, "Z1": 0.0}, max_crews=4)]
+
+    result = plan(wagons, zones, takt_days=5)
+    heavy = next(s for s in result.slots if s.zone_id == "Z0")
+
+    assert heavy.crews == 2, "10 crew-days in a 5-day takt is two crews"
+    assert heavy.utilisation(5) == 1.0
+    assert all(s.utilisation(5) <= 1.0 for s in result.slots)
+
+
+def test_utilisation_is_not_rounded() -> None:
+    """The module's stated refusal, with nothing holding it to it.
+
+    One crew-day of work for one crew across a three-day takt is one third of
+    the paid time, and the plan has to say 0.3333... A rounded 0.33 is a
+    thirty-third of a percent of a labour bill per wagon per zone, and it reads
+    as precision. The docstring says "per wagon, per zone, unrounded"; this is
+    what makes that a property rather than a promise.
+    """
+    zones = [Location("Z0", "Level 0", 0)]
+    wagons = [Wagon(id="W0", name="Snagging", work_content={"Z0": 1.0}, max_crews=1)]
+
+    slot = plan(wagons, zones, takt_days=3).slots[0]
+    utilisation = slot.utilisation(3)
+
+    assert utilisation == pytest.approx(1 / 3, abs=1e-15)
+    assert utilisation != round(utilisation, 2)
+    assert len(f"{utilisation!r}") > len("0.33")
+
+
+def test_the_minimum_takt_is_set_by_the_heaviest_zone_not_the_average() -> None:
+    """The same slip again, in the other place it is made.
+
+    `plan()` and `minimum_takt()` each size a gang from a wagon's work, and each
+    has to take the *worst* zone. Ten crew-days in Z0, none in Z1, capped at two
+    crews: the heaviest zone needs five days, the average asks for three. At a
+    three-day takt that wagon would need four crews and is only allowed two --
+    so the "shortest feasible takt" would be reported as one the job cannot run.
+
+    The bottleneck is asserted as well as the number, because "five days"
+    changes nothing on its own: shortening any trade other than the one that
+    sets the floor moves the takt not at all, and that is the whole reason the
+    id is returned alongside it.
+    """
+    zones = [Location("Z0", "Level 0", 0), Location("Z1", "Level 1", 1)]
+    wagons = [
+        Wagon(id="LIGHT", name="Snagging", work_content={"Z0": 1.0, "Z1": 1.0}, max_crews=2),
+        Wagon(id="HEAVY", name="Frame", work_content={"Z0": 10.0, "Z1": 0.0}, max_crews=2),
+    ]
+
+    takt, bottleneck = minimum_takt(wagons, zones)
+
+    assert takt == 5, "10 crew-days at a 2-crew cap is five days, not the 3 the average gives"
+    assert bottleneck == "HEAVY"
+    assert crews_for(10.0, takt) <= 2, "the reported minimum must actually be feasible"
+    assert crews_for(10.0, takt - 1) > 2, "and one day shorter must not be"

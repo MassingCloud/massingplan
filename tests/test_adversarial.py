@@ -308,11 +308,87 @@ def test_a_sql_looking_string_is_data_not_sql(app) -> None:  # type: ignore[no-u
 def test_a_newline_in_an_exported_field_cannot_forge_an_xer_row(app) -> None:  # type: ignore[no-untyped-def]
     """The XER format is tab-and-newline delimited. A name carrying a newline
     would otherwise inject a row into the file the planner opens in P6.
+
+    **Counted, not pattern-matched.** This asserted that `"\\n%R\\t99"` did not
+    appear, meaning to spot the forged `%R\\t99\\t1\\tEVIL` row. Activity ids are
+    uuid4 hex, so any activity whose id happens to begin `99` produces a
+    genuine row reading `%R\\t99d855d8...` and the assertion fires on it --
+    about one run in 270, measured, and the determinism job runs the suite
+    twice. It went red in CI on a build that changed nothing near the exporter.
+
+    Injection adds a *row*. So count the rows: one activity in, one `%R` row
+    out, whatever anybody put in the name.
+
+    **And it tested the wrong layer.** Going through `_import` puts the newline
+    in the *uploaded file*, where it is a row separator before the reader ever
+    sees it -- so two activities are imported, two are exported, and no field
+    ever contains a newline. The name that reaches the writer is always clean,
+    which is why this passed while the writer had no escaping at all.
+
+    The reachable path is the API: a JSON string carries a newline happily, and
+    `write_xer` emitted it raw. That is the case below.
+    """
+    from datetime import date
+
+    from massingplan.core.model import Calendar, ExchangeActivity, ExchangeSchedule
+    from massingplan.core.network import ActivityKind
+    from massingplan.core.xer import read_xer, write_xer
+
+    forged = "Dig\n%R\t99\t1\tEVIL\tInjected\t8"
+    schedule = ExchangeSchedule(
+        project_id="P",
+        project_name="P",
+        data_date=date(2026, 6, 1),
+        planned_start=date(2026, 6, 1),
+        default_calendar_id="C",
+        calendars=[Calendar(id="C", name="Std", working_weekdays={0, 1, 2, 3, 4})],
+        activities=[
+            ExchangeActivity(
+                id="A1",
+                name=forged,
+                kind=ActivityKind.TASK,
+                calendar_id="C",
+                duration_days=5,
+            )
+        ],
+    )
+    body = write_xer(schedule)
+
+    # `%R` rows appear under several tables; activities live in TASK, and taking
+    # all of them would count calendars and WBS nodes too.
+    task_rows = [
+        line for line in body.splitlines() if line.startswith("%R\t") and "TT_Task" in line
+    ]
+    assert len(task_rows) == 1, (
+        f"one activity in, {len(task_rows)} task rows out: the newline forged one"
+    )
+    assert read_xer(body).activities[0].name == "Dig %R 99 1 EVIL Injected 8", (
+        "the delimiters are neutralised and the words survive"
+    )
+
+
+def test_the_uploaded_file_path_still_round_trips(app) -> None:  # type: ignore[no-untyped-def]
+    """The case the test above used to cover, kept because it is worth covering.
+
+    A newline in the *file* is a row separator, so this is two activities being
+    imported rather than an injection -- and the export must carry both.
     """
     client = _client(app)
     project_id = _import(client, code="INJ", activity="Dig\n%R\t99\t1\tEVIL\tInjected\t8")
     body = client.get(f"/projects/{project_id}/export.xer").get_data(as_text=True)
-    assert "Injected" not in body.replace("\\n", "") or "\n%R\t99" not in body
+
+    task_rows = [
+        line for line in body.splitlines() if line.startswith("%R\t") and "TT_Task" in line
+    ]
+    assert len(task_rows) == 2, "two rows went in; two come out"
+    # And every row is intact: as many fields as the TASK table declares columns,
+    # which is what a forged row breaks and a substring match cannot see.
+    columns = next(
+        line for line in body.splitlines() if line.startswith("%F\t") and "task_code" in line
+    )
+    width = len(columns.split("\t")) - 1
+    for row in task_rows:
+        assert len(row.split("\t")) - 1 == width, f"a task row has the wrong field count: {row!r}"
 
 
 # -- header injection ------------------------------------------------------

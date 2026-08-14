@@ -87,6 +87,21 @@ image is pinned by digest, not by tag.
 to boot in production without `MASSINGPLAN_SECRET_KEY`, and a CI step asserts
 that refusal.
 
+**Exported XER.** Every field written goes through one sanitiser that removes
+tabs and newlines. XER is tab-delimited with newline-terminated rows and has no
+escape sequence, so a value carrying either does not produce a malformed file —
+it produces a **well-formed file with different contents**. An activity named
+`Dig\n%R\t99\t1\tEVIL` ended its own row and started another, and the schedule a
+planner opened in P6 contained an activity nobody added. Reachable through the
+API, where a JSON string carries a newline happily. There is nowhere else to fix
+it: a reader cannot tell a forged row from a real one, because by then they are
+the same thing.
+
+The adversarial suite covered this and passed throughout, because its fixture
+put the newline in the *uploaded file* — where it is a row separator before the
+reader sees it, so no field ever held one. The test exercised the wrong layer,
+and now exercises the writer directly.
+
 **Uploaded XML.** Both XML readers go through `core/xmlsafe.py`, which refuses a
 document type declaration defining entities before anything is parsed. This was
 a real hole rather than a theoretical one: `xml.etree` does not resolve external

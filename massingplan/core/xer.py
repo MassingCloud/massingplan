@@ -884,13 +884,33 @@ def write_xer(schedule: ExchangeSchedule, *, exported_at: date | None = None) ->
         "\t".join(["ERMHDR", "19.12", stamp, "Project", "massingplan", "", "", "massingplan"])
     ]
 
+    def field(value: str) -> str:
+        """One cell, with the delimiters that would split the file removed.
+
+        **XER is tab-delimited with newline-terminated rows and has no escape
+        sequence.** A value carrying either character does not produce a
+        malformed file -- it produces a *well-formed* file with different
+        contents. An activity named ``Dig\\n%R\\t99\\t1\\tEVIL`` ends its own row
+        early and starts another, and the schedule a planner opens in P6 has an
+        activity nobody added.
+
+        There is nowhere else to fix this. The reader cannot tell a forged row
+        from a real one, because by the time it reads the file they are the
+        same thing. So the writer never emits the characters.
+
+        Replaced with a space rather than dropped, so ``Level 1\\nWalls`` stays
+        two words. This is the one lossy transformation in the writer and it is
+        confined to characters that cannot survive the format at all.
+        """
+        return value.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+
     def table(name: str, columns: list[str], rows: list[list[str]]) -> None:
         if not rows:
             return
         lines.append(f"%T\t{name}")
         lines.append("\t".join(["%F", *columns]))
         for row in rows:
-            lines.append("\t".join(["%R", *row]))
+            lines.append("\t".join(["%R", *(field(cell) for cell in row)]))
 
     table(
         "PROJECT",

@@ -18,7 +18,8 @@ down reads as a decision.
 | Engine | Multi-calendar CPM, all four relation types, all ten constraint types, data date and progressed logic, DCMA 14-point, Monte Carlo, resource levelling, baseline comparison with delay attribution, line-of-balance, takt, Last Planner |
 | Interchange | Primavera XER read/write, MS Project MSPDI read/write |
 | Forensics | Baseline comparison, and contemporaneous windows analysis (AACE 29R-03 MIP 3.3) |
-| Core | ~8,900 lines, pure standard library, vendored into `ibuilder/massing` |
+| Performance | BEI and variance, plus Earned Schedule reported beside the classic index it replaces |
+| Core | ~9,250 lines, pure standard library, vendored into `ibuilder/massing` |
 | Gates | 19 CI jobs (17 definitions, `test` matrixed over 3.11/3.12/3.13); ~1,140 tests; 100% branch coverage on the calendar kernel |
 
 The engine has also been probed with generated inputs — not only the tests
@@ -67,7 +68,7 @@ baselines; read → schedule → write → read preserves the computed dates on 
 of them; every default taken emits an `Issue` naming the field. The existing
 XER round-trip probe runs against XML unchanged.
 
-### R2 — Earned Schedule alongside the existing BEI
+### R2 — Earned Schedule alongside the existing BEI — **shipped**
 
 **Why.** `progress.py` reports BEI and variance, which say whether activities
 finished when they should have. Earned Schedule says *how far along in time* the
@@ -75,10 +76,12 @@ project is, and unlike SPI(cost) it does not converge to 1.0 as a late project
 finishes — which is precisely when a schedule metric needs to keep telling the
 truth. It is schedule-domain arithmetic on data already in the model.
 
-**Acceptance.** ES, SV(t) and SPI(t) computed from the baseline and the data
-date, hand-checked on a project a planner can verify; SPI(t) still below 1.0 on
-a late project at 100% complete, where SPI(cost) reads 1.0; `None` rather than a
-number when nothing was baselined as due.
+**Acceptance, met.** ES, SV(t) and SPI(t) from the baseline and the data date,
+hand-checked; on the test project SPI(t) reads 0.5 at 100% complete where the
+classic index reads 1.0, and both are returned side by side; `None` rather than
+a number when no time has elapsed. `core/earned.py`, thirteen tests, five
+sabotages. Kept in the list rather than deleted so the acceptance criterion it
+was held to stays readable.
 
 ### R3 — Weather and calendar risk
 

@@ -87,6 +87,19 @@ image is pinned by digest, not by tag.
 to boot in production without `MASSINGPLAN_SECRET_KEY`, and a CI step asserts
 that refusal.
 
+**Uploaded XML.** Both XML readers go through `core/xmlsafe.py`, which refuses a
+document type declaration defining entities before anything is parsed. This was
+a real hole rather than a theoretical one: `xml.etree` does not resolve external
+entities, but it expands internal ones, and a 448-byte document with four levels
+of nested definitions was measured expanding to 30,000 characters — each further
+level multiplying by ten. The reader previously carried a note saying the
+application layer hardened untrusted uploads; it did not, and the only control
+was a byte limit that a payload this small passes trivially. `defusedxml` is the
+usual answer and `core` cannot have it, being pure standard library by contract,
+so the check is built from `re` and applied to the prologue. Neither Primavera
+nor MS Project writes an entity declaration, so it refuses attacks and not
+files.
+
 ## What is not in place yet
 
 Named honestly, because a security document that lists only strengths is a

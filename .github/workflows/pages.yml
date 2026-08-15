@@ -1,0 +1,72 @@
+name: Pages
+
+# The landing page is a single self-contained file under `docs/`. It is
+# deployed as-is: no site generator, no npm install, nothing to go stale
+# between the source and what is served.
+#
+# Deliberately a separate workflow from `ci.yml`. A docs deploy must not be
+# able to make the test matrix look green, and a red test must not stop a typo
+# fix reaching the page -- the two answer different questions.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and a newer commit wins. `cancel-in-progress: false`
+# would queue deploys and briefly serve an older page after a newer one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the page is self-contained
+        # The application ships a `default-src 'self'` CSP and the landing page
+        # holds the same line. A CDN script or a web font added later would
+        # break that silently -- nothing about the page would look different,
+        # it would just start phoning somewhere. So it is asserted here rather
+        # than trusted.
+        run: |
+          # Resource loads only. An `<a href="https://...">` is a link the
+          # reader chooses to follow, not something the page fetches -- and a
+          # check that cannot tell the two apart fails on its own footer and
+          # gets deleted by the next person.
+          # The optional quote after `=` matters and was missing first time
+          # round: `href="https://...` never matched, so the guard passed a
+          # planted CDN stylesheet. Verified against four payloads -- a link,
+          # a script, a CSS `url()` and an `@import` -- rather than trusted.
+          PATTERN='(<script[^>]+src=|<link[^>]+href=|<img[^>]+src=|@import[^;]*|url\()["'"'"']?https?://'
+          if grep -Eiq "$PATTERN" docs/index.html; then
+            echo "::error::docs/index.html fetches an external resource; keep it self-contained"
+            grep -Eino "$PATTERN" docs/index.html
+            exit 1
+          fi
+          echo "no external stylesheets, scripts, fonts or images"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

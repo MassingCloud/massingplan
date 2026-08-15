@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>massingplan — construction scheduling engine</title>
+<meta name="description" content="A standalone construction scheduling engine: multi-calendar CPM, DCMA 14-point, forensic delay analysis to AACE 29R-03, Primavera and MS Project interchange. The engine is pure standard library.">
+<style>
+  /* Self-hosted and inline on purpose: the application ships a
+     `default-src 'self'` CSP and this page holds the same line. No CDN, no
+     web font, no analytics, nothing that phones anywhere. */
+  :root {
+    --bg: #fbfaf8; --fg: #1a1a17; --muted: #5c5a54; --rule: #e2ded6;
+    --card: #ffffff; --accent: #7a3b12; --accent-soft: #f3ebe3; --code: #f5f2ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16171a; --fg: #e8e6e1; --muted: #a2a09a; --rule: #2e3035;
+      --card: #1d1f23; --accent: #e0a06a; --accent-soft: #262227; --code: #232529;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16171a; --fg: #e8e6e1; --muted: #a2a09a; --rule: #2e3035;
+    --card: #1d1f23; --accent: #e0a06a; --accent-soft: #262227; --code: #232529;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 ui-serif, Georgia, "Times New Roman", serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem; }
+  header { border-bottom: 1px solid var(--rule); padding: 3.5rem 0 2.25rem; }
+  h1 { font-size: 2.35rem; line-height: 1.1; margin: 0 0 .5rem; letter-spacing: -.02em; }
+  .tagline { font-size: 1.18rem; color: var(--muted); margin: 0 0 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  h2 {
+    font-size: 1.35rem; margin: 2.75rem 0 .85rem; letter-spacing: -.01em;
+    padding-bottom: .35rem; border-bottom: 1px solid var(--rule);
+  }
+  h3 { font-size: 1.02rem; margin: 1.6rem 0 .4rem; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  ul { padding-left: 1.15rem; margin: 0 0 1rem; }
+  li { margin-bottom: .45rem; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .875em;
+  }
+  code { background: var(--code); padding: .1em .35em; border-radius: 3px; }
+  pre {
+    background: var(--code); border: 1px solid var(--rule); border-radius: 6px;
+    padding: .9rem 1rem; overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: .75rem; margin: 1.75rem 0; }
+  .fact { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: .8rem .9rem; }
+  .fact b { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .fact span { font-size: .8rem; color: var(--muted); }
+  .cta { display: inline-block; background: var(--accent); color: var(--bg); padding: .55rem 1.1rem;
+         border-radius: 5px; text-decoration: none; font-weight: 600; }
+  .cta.secondary { background: none; color: var(--accent); border: 1px solid var(--accent); }
+  .buttons { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1.5rem 0 0; }
+  blockquote {
+    margin: 1.25rem 0; padding: .8rem 1.1rem; background: var(--accent-soft);
+    border-left: 3px solid var(--accent); border-radius: 0 5px 5px 0;
+  }
+  blockquote p:last-child { margin-bottom: 0; }
+  .table-scroll { overflow-x: auto; margin: 0 0 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  footer { border-top: 1px solid var(--rule); margin-top: 3.5rem; padding: 1.75rem 0 3rem;
+           color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>massingplan</h1>
+  <p class="tagline">A construction scheduling engine that refuses to guess.</p>
+  <p class="lede">
+    Multi-calendar CPM with all four relationship types and all ten Primavera
+    constraint types; DCMA 14-point assessment; forensic delay analysis to
+    AACE&nbsp;29R-03; Primavera XER, Primavera P6&nbsp;XML and MS&nbsp;Project
+    MSPDI interchange. The engine imports nothing but the Python standard
+    library, so it can be copied into another codebase and run there unchanged.
+  </p>
+  <div class="buttons">
+    <a class="cta" href="https://github.com/MassingCloud/massingplan">Source on GitHub</a>
+    <a class="cta secondary" href="https://github.com/MassingCloud/massingplan/blob/main/SPEC.md">Read the spec</a>
+  </div>
+</header>
+
+<div class="facts">
+  <div class="fact"><b>11,784</b><span>lines in <code>core/</code>, pure stdlib</span></div>
+  <div class="fact"><b>1,335</b><span>tests</span></div>
+  <div class="fact"><b>19</b><span>CI jobs per push</span></div>
+  <div class="fact"><b>100%</b><span>branch coverage, calendar kernel</span></div>
+</div>
+
+<h2>Why it exists</h2>
+<p>
+  Most scheduling tools compute a plausible answer when they should refuse.
+  A Primavera importer that drops the relationships still produces a schedule —
+  one where every activity is critical with zero float, and nothing says so. A
+  float figure clamped at zero hides the fact that a date cannot be met. A
+  forecast that quietly disagrees with the activity table below it is read
+  against a contract date anyway.
+</p>
+<blockquote>
+  <p>
+    <strong>Negative float is an output, not an error.</strong> It is never
+    clamped — not total float, not free float. Every coercion, default or
+    dropped row emits an issue naming what was done and why.
+  </p>
+</blockquote>
+
+<h2>What it does</h2>
+<div class="table-scroll">
+<table>
+  <tr><th>Area</th><th>Capability</th></tr>
+  <tr><td>Scheduling</td><td>Multi-calendar CPM on an absolute ordinal time axis; FS/SS/FF/SF with lags in a chosen lag calendar; ten constraint types; data date, actuals, retained logic and progress override</td></tr>
+  <tr><td>Quality</td><td>DCMA 14-point with tri-state results — a check that could not run is skipped, not passed, and is excluded from the score's denominator</td></tr>
+  <tr><td>Risk</td><td>Seeded Monte Carlo, byte-identical between runs; criticality index and duration sensitivity</td></tr>
+  <tr><td>Resources</td><td>Demand held level per day, over-allocation per day, serial levelling within float or extending the finish</td></tr>
+  <tr><td>Forensics</td><td>Baseline comparison with delay attribution that sums exactly; contemporaneous windows analysis (MIP&nbsp;3.3); impacted as-planned and collapsed as-built (MIP&nbsp;3.6 and 3.9) with concurrency reported</td></tr>
+  <tr><td>Production</td><td>Line of balance with crew continuity; takt planning; Last Planner with a PPC denominator that cannot shrink after the week</td></tr>
+  <tr><td>Planning</td><td>Earned Schedule; weather allowance modelled in the calendar; schedule compression as priced options; multi-project portfolios with links across the boundary</td></tr>
+  <tr><td>Interchange</td><td>Primavera XER, Primavera P6 XML (including baselines), MS Project MSPDI — all read and written</td></tr>
+</table>
+</div>
+
+<h2>How it is built</h2>
+<ul>
+  <li><strong>Hand-checkable.</strong> Every algorithm has a test network a human can verify with a pencil, and the expected values are written into the test rather than generated from the code.</li>
+  <li><strong>Deterministic.</strong> Same input, same answer, across runs and hash seeds — asserted in CI by running the suite twice under different seeds.</li>
+  <li><strong>Nothing defaulted silently.</strong> Every coercion, drop or fallback emits an issue carrying a stable code and the action taken.</li>
+  <li><strong>One conversion site.</strong> Instants become dates in exactly one function. Every off-by-one in scheduling software lives in that convention being applied twice, or not at all, in two different places.</li>
+  <li><strong>Core never writes.</strong> It computes and returns; the caller persists.</li>
+</ul>
+
+<h2>Verified by breaking it</h2>
+<p>
+  Passing tests prove that code does what its author expected. They do not prove
+  the expectation was right. So the engine is also probed with generated inputs
+  — random networks, random re-baselines, random progressed schedules — checked
+  against the properties the modules claim rather than against remembered
+  answers.
+</p>
+<p>
+  Those runs have found defects a fully green suite was passing over: float
+  overstated behind a Start-to-Finish link, a Monte Carlo forecast a day late
+  and landing on Saturdays, a Primavera constraint read as a one-sided floor so
+  that pinned activities silently gained slack, a levelling pass that delayed an
+  activity without delaying anything downstream of it, and an exporter that let
+  an activity name forge a row in the file a planner opens.
+</p>
+<p>
+  Every fix is verified the same way: break the fix, watch a test go red, put it
+  back. Where a probe found nothing, the existing tests were deliberately broken
+  to confirm the coverage was real rather than absent — and more than once the
+  probe turned out to be wrong before the engine was, which is recorded in the
+  probe rather than quietly corrected.
+</p>
+
+<h2>Using it</h2>
+<h3>As a library</h3>
+<pre><code>from datetime import date
+from massingplan.core.network import Link, RelationType, Task
+from massingplan.core.schedule import schedule_network
+
+tasks = [Task("A", "Substructure", 10, "5D"),
+         Task("B", "Frame", 15, "5D")]
+links = [Link("A", "B", RelationType.FS, 0)]
+
+outcome = schedule_network(tasks, links, calendars, data_date=date(2026, 6, 1))
+print(outcome.project_finish, outcome.longest_path)</code></pre>
+
+<h3>As an API</h3>
+<p>
+  Fifteen endpoints under <code>/api/massingplan/v1/</code>, every one taking
+  and returning plain JSON: <code>schedule</code>, <code>analyse</code>,
+  <code>risk</code>, <code>linear</code>, <code>takt</code>,
+  <code>level</code>, <code>compare</code>, <code>windows</code>,
+  <code>earned-schedule</code>, <code>modelled-delay</code>,
+  <code>compress</code>, <code>portfolio</code>, <code>weather</code>,
+  <code>import</code> and <code>capabilities</code>.
+</p>
+<pre><code>curl -X POST https://your-host/api/massingplan/v1/schedule \
+  -H "Authorization: Bearer mpln_..." \
+  -H "Content-Type: application/json" \
+  -d '{"data_date": "2026-06-01",
+       "activities": [{"id": "A", "duration_days": 10}]}'</code></pre>
+
+<h3>Vendored into another codebase</h3>
+<p>
+  <code>massingplan/core/</code> imports nothing outside the standard library,
+  enforced by an import-linter contract and a dedicated CI job. It is copied
+  verbatim into a consumer with a <code>VENDOR.md</code> pinning the upstream
+  commit, and travels with a stdlib-only conformance gate the consumer can run.
+</p>
+
+<h2>Honest about what it is not</h2>
+<ul>
+  <li><strong>Alpha.</strong> Nobody has run it on a live commercial programme.</li>
+  <li><strong>No penetration test.</strong> There is an adversarial test suite, written from the attacker's side, and a suite its own author wrote is not a substitute for someone trying to break it.</li>
+  <li><strong>No run against a commercial identity provider.</strong> The OIDC path is exercised against a local issuer only.</li>
+  <li><strong>Deliberate omissions are written down</strong> rather than left to be discovered — no metaheuristic optimiser, no reverse flow in line of balance, no per-zone takt, no mobile Last Planner client. Each has a reason recorded next to it.</li>
+</ul>
+
+<h2>Documentation</h2>
+<ul>
+  <li><a href="https://github.com/MassingCloud/massingplan/blob/main/SPEC.md">SPEC.md</a> — the research, the time-axis decision, the precedence stack</li>
+  <li><a href="https://github.com/MassingCloud/massingplan/blob/main/ROADMAP.md">ROADMAP.md</a> — what shipped, and what is deliberately not coming</li>
+  <li><a href="https://github.com/MassingCloud/massingplan/blob/main/SECURITY.md">SECURITY.md</a> — the posture, including what has not been done</li>
+  <li><a href="https://github.com/MassingCloud/massingplan/blob/main/AGENTS.md">AGENTS.md</a> — architecture rules and where things live</li>
+  <li><a href="https://github.com/MassingCloud/massingplan/blob/main/docs/deployment.md">deployment.md</a> — running it</li>
+</ul>
+
+<footer>
+  <p>
+    MIT licensed · <a href="https://github.com/MassingCloud/massingplan">MassingCloud/massingplan</a>
+  </p>
+  <p>
+    Standards referenced: AACE International Recommended Practice 29R-03
+    (forensic schedule analysis) and the Society of Construction Law Delay and
+    Disruption Protocol, 2nd edition.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -10,6 +10,9 @@ baseline-to-baseline delay attribution that sums.
 Standalone and self-hostable. Its engine is pure standard library, so it also
 drops into other products' source trees unchanged.
 
+**[massingcloud.github.io/massingplan](https://massingcloud.github.io/massingplan/)** —
+what it does and how it is built, on one page.
+
 ```bash
 pip install -e ".[dev]"
 massingplan check          # boot and report the resolved config
@@ -49,10 +52,16 @@ score is the percentage of runnable checks, not a number inflated by the ones
 that could not run. Check 12 actually runs the critical path test rather than
 asserting it.
 
-**Interchange.** Primavera XER and MS Project MSPDI, read and write, with no
-third-party dependency. Including the tables that get dropped elsewhere:
-`TASKPRED`, `SCHEDOPTIONS`, and real calendar exceptions — a two-week shutdown
-that goes unparsed moves every downstream date two weeks early.
+**Interchange.** Primavera XER, Primavera P6 XML (PMXML) and MS Project MSPDI,
+read and write, with no third-party dependency. Including the tables that get
+dropped elsewhere: `TASKPRED`, `SCHEDOPTIONS`, and real calendar exceptions — a
+two-week shutdown that goes unparsed moves every downstream date two weeks
+early. P6 XML is the format that carries the *series*: XER exports one snapshot,
+so a baseline comparison out of XER needs two files and a promise about which is
+which, while PMXML carries the baselines in the same document as extra
+`<Project>` elements. Both XML readers refuse entity-expansion bombs, and both
+writers strip the C0 control characters that XML 1.0 cannot represent in any
+form, numeric escape included.
 
 **Risk.** Monte Carlo with PERT or triangular distributions, criticality index,
 duration sensitivity, and percentiles that round up, because a P80 of 271.2 days
@@ -66,6 +75,44 @@ and reports what it could not resolve rather than quietly extending the date.
 matching, driving-path deltas, and attribution whose contributions sum exactly
 to the finish move. A residual is named `PATH_SWITCH` or `UNEXPLAINED`, never
 dropped to make the arithmetic work.
+
+**Forensic delay analysis, to AACE 29R-03.** Three of the recommended practice's
+methods, each labelled with the MIP it implements rather than left as a generic
+"delay report":
+
+- **MIP 3.3, observational contemporaneous** — windows analysis over the update
+  series. Critical path per window, measured against the schedule that was live
+  at the time, so the answer does not depend on what anyone knew afterwards.
+- **MIP 3.6, additive** — impacted as-planned: insert the delay events into the
+  baseline and re-run.
+- **MIP 3.9, subtractive** — collapsed as-built: remove them from the as-built
+  and re-run.
+
+The additive and subtractive models reroute **only FS** predecessors when an
+event is inserted or removed, because an SS or FF tie is not a queue and
+rerouting it invents logic the planner never drew. Impacts are stated in working
+days on a named basis calendar; where a project runs on more than one calendar
+that figure is approximate, and the result says so with an `is_exact` flag
+rather than quoting a tolerance — the measured error on mixed-calendar
+concurrency was four days, not the ±1 that reasoning suggested.
+
+**Earned Schedule.** Alongside BEI, because SPI in cost units famously returns
+to 1.0 at completion no matter how late the project finished, and a metric that
+converges on "fine" is worst exactly when it is needed most.
+
+**Weather.** Allowances applied against the calendar as non-working days, and
+removed again, so an excusable weather event and the contractor's own delay do
+not get counted twice on the same day. Spread evenly across the window rather
+than dumped at one end.
+
+**Compression.** Crashing and fast-tracking evaluated as options with a cost per
+day recovered, ranked, and — the part that matters — re-run against the network
+after each choice, since crashing an activity off the critical path recovers
+nothing and the second-best option is frequently not the second choice.
+
+**Portfolio.** Multiple projects with inter-project logic, scheduled together,
+plus the standalone answer for each so a planner can see what the neighbouring
+project is costing them.
 
 **Line of balance.** Location-based scheduling with **crew continuity** — the
 thing CPM structurally cannot express. The line shift takes its maximum over
@@ -120,10 +167,26 @@ change.
   free float.
 - **Core never writes.** It computes and returns; the caller persists.
 
+## Verified by breaking it
+
+A test that passes proves the test ran, not that it would notice. So the way a
+fix gets accepted here is: break the fix on purpose, watch a named test go red,
+put it back. Several claims in this repo were retracted that way rather than
+defended — a comment crediting a tie-break for determinism it did not provide, a
+weather double-count test that passed only because its three days happened to
+straddle Christmas, and a mixed-calendar tolerance that measurement contradicted.
+
+The same applies to the probes. Six of them were wrong before the engine was —
+most memorably a run of multi-calendar probes that were single-calendar all
+along, because `WorkCalendar(id, name, pattern, ...)` takes a *name* second and
+a positional pattern lands there silently, defaulting the calendar to Mon–Fri.
+Where a claim has not been checked that way, it is not stated.
+
 ## Status
 
-Alpha, built in phases through P13. See `SPEC.md` §11 for the plan and what
-each phase has to prove before the next starts.
+Alpha, built in phases through P13, plus roadmap items R1–R6 (P6 XML, Earned
+Schedule, weather, the modelled delay methods, compression, portfolios). See
+`SPEC.md` §11 for the phase plan and `ROADMAP.md` for what came after it.
 
 What is deliberately **not** here, so it is not discovered later: there is no
 mobile or offline client for Last Planner — it is a planner's board, not a
@@ -135,6 +198,8 @@ a commercial identity provider.
 
 ## Documentation
 
+- [massingcloud.github.io/massingplan](https://massingcloud.github.io/massingplan/)
+  — the overview page, built from `docs/index.html` in this repo
 - `SPEC.md` — the research, the time-axis decision, the precedence stack, the
   phase plan
 - `ROADMAP.md` — what comes next, what it has to prove, and what is

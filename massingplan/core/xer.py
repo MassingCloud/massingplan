@@ -103,6 +103,32 @@ CONSTRAINTS_TO_XER = {v: k for k, v in XER_CONSTRAINTS.items() if k}
 
 DEFAULT_HOURS_PER_DAY = 8.0
 
+#: Every character `str.splitlines` treats as a line break, plus the tab that
+#: separates fields. The writer removes all of them from every cell.
+#:
+#: Written out rather than assumed, because **"a newline" and "what splits a
+#: line" are not the same set**, and the difference is exploitable. The first
+#: version of the writer's sanitiser removed CRLF, LF, CR and tab -- which is
+#: what "newline" means to a reader of the format -- and a name containing a
+#: vertical tab still forged a row, because that is what `splitlines` means by
+#: it. `parse_tables` splits with `splitlines`, so this is its exact inverse,
+#: and if the reader ever changes its splitter this is where the two are
+#: compared.
+ROW_BREAKS = (
+    "\r\n",  # first, so a CRLF collapses to one space rather than two
+    "\n",
+    "\r",
+    "\t",
+    "\v",
+    "\f",
+    "\x1c",  # file separator
+    "\x1d",  # group separator
+    "\x1e",  # record separator
+    "\x85",  # next line
+    "\u2028",  # line separator
+    "\u2029",  # paragraph separator
+)
+
 #: P6 packs calendar exception days as a serial number counting from this
 #: epoch -- the same one Excel uses, including its off-by-one leap-year quirk.
 _SERIAL_EPOCH = date(1899, 12, 30)
@@ -902,7 +928,9 @@ def write_xer(schedule: ExchangeSchedule, *, exported_at: date | None = None) ->
         two words. This is the one lossy transformation in the writer and it is
         confined to characters that cannot survive the format at all.
         """
-        return value.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        for character in ROW_BREAKS:
+            value = value.replace(character, " ")
+        return value
 
     def table(name: str, columns: list[str], rows: list[list[str]]) -> None:
         if not rows:

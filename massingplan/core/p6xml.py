@@ -56,6 +56,7 @@ from .model import (
 from .network import ActivityKind, LagCalendar, ProgressMode, RelationType, SchedulerOptions
 from .units import days_from_hours
 from .xmlsafe import parse as parse_xml
+from .xmlsafe import text as xml_text
 
 #: Microsoft and Oracle both spell these; Oracle spells them in English.
 P6_RELATION_TYPES = {
@@ -599,7 +600,16 @@ def write_p6xml(schedule: ExchangeSchedule, *, exported_at: date | None = None) 
     Written with the default namespace declared, which is the more common of
     the two forms in the wild and the one P6 itself emits.
     """
-    from xml.sax.saxutils import escape
+    from xml.sax.saxutils import escape as _escape
+
+    def escape(value: str) -> str:
+        """Escape what changes meaning, and remove what XML cannot carry.
+
+        `saxutils.escape` handles `&`, `<` and `>`. It says nothing about the
+        C0 controls XML 1.0 forbids outright, and a name containing one
+        produced an export no parser would open -- P6's included.
+        """
+        return _escape(xml_text(value))
 
     hours_per_day = DEFAULT_HOURS_PER_DAY
     default_calendar = schedule.default_calendar()

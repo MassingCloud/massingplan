@@ -102,6 +102,27 @@ put the newline in the *uploaded file* — where it is a row separator before th
 reader sees it, so no field ever held one. The test exercised the wrong layer,
 and now exercises the writer directly.
 
+The first fix was also incomplete, and auditing the class rather than the
+instance is what caught it. It removed CRLF, LF, CR and tab — which is what
+"newline" means to a reader of the format — while `parse_tables` splits with
+`str.splitlines`, which breaks on **twelve** characters including the vertical
+tab and the Unicode line separator. A name carrying one still forged a row.
+`xer.ROW_BREAKS` is now the reader's splitter written out, so the two can be
+compared if either changes.
+
+**Exported XML.** Escaping `&`, `<` and `>` stops a name closing an element and
+opening another; it says nothing about the characters XML 1.0 forbids outright.
+`&#x0B;` is as illegal as a raw vertical tab, so a name containing one produced
+an export **no parser would open** — MS Project's and P6's included. Not
+tampering: total loss, discovered when the planner tries to open the file.
+`xmlsafe.text` removes them, and both XML writers run every field through it.
+
+`tests/test_injection.py` now throws ten payloads at all three writers in a
+matrix and asserts the same two properties of each: the file reads back with
+the same number of activities, and the words survive as data. Escaping is not
+deleting — a writer that dropped every suspicious character would pass the
+first half and lose the planner's activity names.
+
 **Uploaded XML.** Both XML readers go through `core/xmlsafe.py`, which refuses a
 document type declaration defining entities before anything is parsed. This was
 a real hole rather than a theoretical one: `xml.etree` does not resolve external

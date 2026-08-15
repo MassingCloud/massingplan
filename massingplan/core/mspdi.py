@@ -37,6 +37,7 @@ from .model import (
 from .network import ActivityKind, RelationType
 from .units import days_from_hours, hours_from_days
 from .xmlsafe import parse as parse_xml
+from .xmlsafe import text as xml_text
 
 MSPDI_NS = "http://schemas.microsoft.com/project"
 
@@ -490,8 +491,17 @@ def write_mspdi(schedule: ExchangeSchedule, *, exported_at: date | None = None) 
     stamp = exported_at or date.today()
 
     def esc(value: str) -> str:
+        """Escape the characters that change meaning; remove the illegal ones.
+
+        Two different problems and both have to be handled here. Escaping `&`,
+        `<` and `>` stops a name closing an element and opening another.
+        `xmlsafe.text` removes the C0 controls XML 1.0 forbids outright -- a
+        vertical tab is not expressible even as `&#x0B;`, so a name carrying
+        one produced a file that no parser would open, MS Project's included.
+        """
         return (
-            value.replace("&", "&amp;")
+            xml_text(value)
+            .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace('"', "&quot;")

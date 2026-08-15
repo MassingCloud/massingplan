@@ -74,4 +74,40 @@ def parse(content: str) -> ElementTree.Element:
     return ElementTree.fromstring(content)  # noqa: S314 - guarded immediately above
 
 
-__all__ = ["looks_like_a_bomb", "parse"]
+#: Characters XML 1.0 does not permit in content **at any escaping**.
+#:
+#: The rule is `#x9 | #xA | #xD | [#x20-#xD7FF] | ...`, so every other C0
+#: control is simply not expressible: `&#x0B;` is as illegal as a raw vertical
+#: tab. `xml.sax.saxutils.escape` does not help -- it handles `&`, `<` and `>`,
+#: which are the characters that change a document's *meaning*, and says
+#: nothing about the ones that make it unparseable.
+#:
+#: An activity named `Dig<VT>vertical` therefore produced an export that no XML
+#: parser would open, including MS Project's and P6's. Not tampering: total
+#: loss, discovered when the planner tries to open the file.
+_ILLEGAL = (
+    {codepoint for codepoint in range(0x20) if codepoint not in (0x09, 0x0A, 0x0D)}
+    | {0x7F}
+    | set(range(0x80, 0xA0))
+)
+
+_ILLEGAL_TABLE = dict.fromkeys(_ILLEGAL, " ")
+
+
+def text(value: str) -> str:
+    """A string safe to place in XML content, with illegal characters removed.
+
+    Replaced with a space rather than dropped, on the same reasoning as the XER
+    writer: `Level 1<VT>Walls` should stay two words. Escaping is not deleting,
+    and a writer that silently swallowed the planner's activity names would be
+    trading one bug for a quieter one.
+
+    This is *not* a substitute for escaping `&`, `<` and `>` -- the writers do
+    that separately, and the two solve different problems. This one is about
+    documents that will not parse; that one is about documents that parse into
+    something else.
+    """
+    return value.translate(_ILLEGAL_TABLE)
+
+
+__all__ = ["looks_like_a_bomb", "parse", "text"]

@@ -295,3 +295,25 @@ def test_the_summary_is_json_safe(five_day) -> None:  # type: ignore[no-untyped-
     payload = json.loads(json.dumps(result.summary()))
     assert payload["project_count"] == 2
     assert set(payload["project_finishes"]) == {"ENABLING", "MAIN"}
+
+
+def test_standalone_rows_default_to_the_portfolios_own_basis() -> None:
+    """Omitting the calendars must not silently change the calendar.
+
+    `standalone_rows_for` fell through to `schedule_network`'s synthesised
+    Mon-Fri default, so a 12-day activity on a Mon-Sat programme finished 13
+    June inside the portfolio and 16 June here -- from the one method whose
+    entire purpose is comparing those two numbers.
+    """
+    from massingplan.core.timeaxis import WorkCalendar, WorkPattern
+
+    six = WorkCalendar(id="6D", name="Mon-Sat", pattern=WorkPattern(frozenset({0, 1, 2, 3, 4, 5})))
+    result = schedule_portfolio(
+        [Project("P1", [Task("A", "A", 12, "6D")]), Project("P2", [Task("B", "B", 3, "6D")])],
+        [],
+        {"6D": six},
+        data_date=JUN1,
+    )
+    inside = result.dates["P1"]["A"].finish
+    assert inside == date(2026, 6, 13), "Mon-Sat, twelve days from Mon 1 June"
+    assert result.standalone_rows_for("P1")[0]["finish"] == inside.isoformat()

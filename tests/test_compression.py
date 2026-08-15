@@ -267,3 +267,41 @@ def test_the_plan_is_identical_under_a_changed_hash_seed() -> None:
         )
         answers.add(out.stdout.strip())
     assert len(answers) == 1, f"the plan differed between hash seeds: {answers}"
+
+
+def test_crashing_and_overlapping_the_same_activity_still_overlaps(five_day) -> None:  # type: ignore[no-untyped-def]
+    """The lag has to come from the duration the activity ends up with.
+
+    `apply` built its lookup from the *original* tasks, so an activity that was
+    both shortened and overlapped had its lag computed against a duration it no
+    longer had. Crash A from ten days to four and overlap A->B by two, and the
+    link came out `SS(8)`: B started five working days *after* A finished. The
+    caller asked for an overlap and got a gap, on a schedule that computes
+    cleanly and looks entirely valid.
+    """
+    tasks = [Task("A", "Substructure", 10, "5D"), Task("B", "Frame", 10, "5D")]
+    links = [Link("A", "B", RelationType.FS, 0)]
+    stamp = date(2026, 7, 10)
+
+    new_tasks, new_links = apply(
+        tasks,
+        links,
+        [
+            CrashOption("A", days=6, cost=600.0, finish_before=stamp, finish_after=stamp),
+            FastTrackOption(
+                "A", "B", overlap_days=2, finish_before=stamp, finish_after=stamp, risk="x"
+            ),
+        ],
+    )
+    shortened = next(t for t in new_tasks if t.id == "A")
+    assert shortened.duration_days == 4
+    assert new_links[0].lag_days == 2, "4-day activity, 2-day overlap: the lag is 2, not 10-2"
+
+    rows = {
+        r["activity_id"]: r
+        for r in schedule_network(new_tasks, new_links, {"5D": five_day}, data_date=JUN1).to_rows()
+    }
+    assert rows["B"]["start"] <= rows["A"]["finish"], (
+        f"B starts {rows['B']['start']} and A finishes {rows['A']['finish']}: that is a gap, "
+        "not an overlap"
+    )

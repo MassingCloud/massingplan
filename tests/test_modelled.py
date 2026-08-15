@@ -342,3 +342,39 @@ def test_the_unimpacted_finish_is_the_schedule_the_caller_passed_in(five_day) ->
         tasks, links, cals, events=[DelayEvent("E", "X", 5, impacts="A")], data_date=JUN1
     )
     assert result.unimpacted_finish == plain.project_finish
+
+
+def test_concurrency_is_exact_only_on_one_calendar(five_day, six_day) -> None:  # type: ignore[no-untyped-def]
+    """A mixed-calendar network cannot make delay additive, and says so.
+
+    "How many days did the finish move" is only well posed against *a*
+    calendar, and a project finish is one date. Measured over 400 random
+    two-calendar networks the discrepancy reached -4 days -- so this is not a
+    tolerance to wave away, and a report quoting `concurrency_days` as a
+    precise entitlement on a mixed programme is quoting something the
+    arithmetic does not support.
+    """
+    single = impacted_as_planned(
+        [Task("A", "A", 10, "5D")],
+        [],
+        {"5D": five_day},
+        events=[DelayEvent("E", "x", 3, impacts="A")],
+        data_date=JUN1,
+    )
+    assert single.is_exact is True
+    assert single.calendar_count == 1
+    assert single.to_dict()["concurrency_is_exact"] is True
+
+    mixed = impacted_as_planned(
+        [Task("A", "A", 10, "5D"), Task("B", "B", 5, "6D")],
+        [Link("A", "B", RelationType.FS, 0)],
+        {"5D": five_day, "6D": six_day},
+        events=[DelayEvent("E", "x", 3, impacts="A")],
+        data_date=JUN1,
+    )
+    assert mixed.is_exact is False
+    assert mixed.calendar_count == 2
+    assert mixed.basis_calendar_id in ("5D", "6D")
+    assert any("calendars" in note for note in mixed.notes), (
+        "a mixed-calendar network must name the basis its day-counts were taken on"
+    )
